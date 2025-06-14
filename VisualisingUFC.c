@@ -6,6 +6,13 @@ typedef struct {
     list_t *data;
     list_t *packetDefinitions;
     list_t *packets;
+    double mx; // mouseX
+    double my; // mouseY
+    double mw; // mouseWheel
+    double bottomBoxHeight;
+
+    double dataColors[36];
+
 } visualising_ufc_t;
 
 typedef enum {
@@ -32,35 +39,121 @@ int32_t matchPacket(int32_t packetIndex, uint8_t *file, uint32_t maxLength) {
     if (maxLength <= packetType -> data[1].i) {
         return 0;
     }
+    uint32_t packetField = 2;
     for (uint32_t i = 0; i < packetType -> data[1].i; i++) {
+        if (packetField >= packetType -> length) {
+            return 0;
+        }
         /* we make use of the assumption that big endian machines don't exist - and it's 2025 so they really don't */
-        switch (packetType -> data[i * 2 + 2].i) {
+        switch (packetType -> data[packetField].i) {
             case UFC_PACKET_FIELD_DELIMETER_UINT64:
-            if (packetType -> data[i * 2 + 3].l != *((uint64_t *) (file + i))) {
+            if (packetType -> data[packetField + 1].l != *((uint64_t *) (file + i))) {
                 return 0;
             }
+            i += 7;
             break;
             case UFC_PACKET_FIELD_DELIMETER_UINT32:
             // printf("%X ", *((uint32_t *) (file + i)));
-            if (packetType -> data[i * 2 + 3].u != *((uint32_t *) (file + i))) {
+            if (packetType -> data[packetField + 1].u != *((uint32_t *) (file + i))) {
                 return 0;
             }
+            i += 3;
             break;
             case UFC_PACKET_FIELD_DELIMETER_UINT16:
-            if (packetType -> data[i * 2 + 3].h != *((uint16_t *) (file + i))) {
+            if (packetType -> data[packetField + 1].h != *((uint16_t *) (file + i))) {
+                return 0;
+            }
+            i += 1;
+            break;
+            case UFC_PACKET_FIELD_DELIMETER_UINT8:
+            // printf("%X %X\n", packetType -> data[packetField + 1].b, file[i]);
+            if (packetType -> data[packetField + 1].b != file[i]) {
                 return 0;
             }
             break;
-            case UFC_PACKET_FIELD_DELIMETER_UINT8:
-            if (packetType -> data[i * 2 + 3].b != file[i]) {
-                return 0;
-            }
+            case UFC_PACKET_FIELD_DOUBLE:
+            case UFC_PACKET_FIELD_UINT64:
+            case UFC_PACKET_FIELD_INT64:
+            i += 7;
+            break;
+            case UFC_PACKET_FIELD_FLOAT:
+            case UFC_PACKET_FIELD_UINT32:
+            case UFC_PACKET_FIELD_INT32:
+            i += 3;
+            break;
+            case UFC_PACKET_FIELD_UINT16:
+            case UFC_PACKET_FIELD_INT16:
+            i += 1;
             break;
             default:
             break;
         }
+        packetField += 2;
     }
-    printf("bno packet spotted\n");
+    /* packet found */
+    list_t *packet = list_init();
+    packetField = 2;
+    for (uint32_t i = 0; i < packetType -> data[1].i; i++) {
+        switch (packetType -> data[packetField].i) {
+            case UFC_PACKET_FIELD_DELIMETER_UINT64:
+            list_append(packet, (unitype) *((uint64_t *) (file + i)), 'l');
+            i += 7;
+            break;
+            case UFC_PACKET_FIELD_DELIMETER_UINT32:
+            list_append(packet, (unitype) *((uint32_t *) (file + i)), 'u');
+            i += 3;
+            break;
+            case UFC_PACKET_FIELD_DELIMETER_UINT16:
+            list_append(packet, (unitype) *((uint16_t *) (file + i)), 'h');
+            i += 1;
+            break;
+            case UFC_PACKET_FIELD_DELIMETER_UINT8:
+            list_append(packet, (unitype) *((uint8_t *) (file + i)), 'b');
+            break;
+            case UFC_PACKET_FIELD_DOUBLE:
+            list_append(packet, (unitype) *((double *) (file + i)), 'd');
+            i += 7;
+            break;
+            case UFC_PACKET_FIELD_UINT64:
+            list_append(packet, (unitype) *((uint64_t *) (file + i)), 'l');
+            i += 7;
+            break;
+            case UFC_PACKET_FIELD_INT64:
+            list_append(packet, (unitype) *((uint64_t *) (file + i)), 'l');
+            i += 7;
+            break;
+            case UFC_PACKET_FIELD_FLOAT:
+            list_append(packet, (unitype) *((float *) (file + i)), 'f');
+            i += 3;
+            break;
+            case UFC_PACKET_FIELD_UINT32:
+            list_append(packet, (unitype) *((uint32_t *) (file + i)), 'u');
+            i += 3;
+            break;
+            case UFC_PACKET_FIELD_INT32:
+            list_append(packet, (unitype) *((int32_t *) (file + i)), 'i');
+            i += 3;
+            break;
+            case UFC_PACKET_FIELD_UINT16:
+            list_append(packet, (unitype) *((uint16_t *) (file + i)), 'h');
+            i += 1;
+            break;
+            case UFC_PACKET_FIELD_INT16:
+            list_append(packet, (unitype) *((uint16_t *) (file + i)), 'h');
+            i += 1;
+            break;
+            case UFC_PACKET_FIELD_INT8:
+            list_append(packet, (unitype) *((uint8_t *) (file + i)), 'b');
+            break;
+            case UFC_PACKET_FIELD_UINT8:
+            list_append(packet, (unitype) *((uint8_t *) (file + i)), 'b');
+            break;
+            default:
+            break;
+        }
+        packetField += 2;
+    }
+    list_append(self.packets -> data[packetIndex].r, (unitype) packet, 'r');
     return 1;
 }
 
@@ -72,9 +165,13 @@ void import(char *filename) {
     if (fileData == NULL) {
         return;
     }
+    // fileSize /= 15;
     for (uint32_t i = 0; i < fileSize; i++) {
-        matchPacket(0, fileData + i, fileSize - i);
+        for (uint32_t j = 0; j < self.packetDefinitions -> length; j++) {
+            matchPacket(j, fileData + i, fileSize - i);
+        }
     }
+    // list_print(self.packets -> data[3].r);
     // for (uint32_t i = 0; i < 100; i++) {
     //     printf("%X ", fileData[i]);
     // }
@@ -82,9 +179,60 @@ void import(char *filename) {
 }
 
 void init() {
+    /* we assume that big endian machines do not exist */
     self.data = list_init();
     self.packetDefinitions = list_init();
     self.packets = list_init();
+
+    /* Status packet */
+    list_t *statusPacket = list_init();
+    list_append(statusPacket, (unitype) "statusPacket", 's');
+    list_append(statusPacket, (unitype) 24, 'i'); // status packet is 24 bytes big
+    list_append(statusPacket, (unitype) UFC_PACKET_FIELD_DELIMETER_UINT32, 'i');
+    list_append(statusPacket, (unitype) 0xBA5EBA11, 'u');
+    list_append(statusPacket, (unitype) UFC_PACKET_FIELD_UINT32, 'i');
+    list_append(statusPacket, (unitype) "timestamp", 's');
+    list_append(statusPacket, (unitype) UFC_PACKET_FIELD_DELIMETER_UINT8, 'i'); // pkt_type always 1 for status packet
+    list_append(statusPacket, (unitype) 1, 'b');
+    list_append(statusPacket, (unitype) UFC_PACKET_FIELD_UINT8, 'i');
+    list_append(statusPacket, (unitype) "state", 's');
+    list_append(statusPacket, (unitype) UFC_PACKET_FIELD_UINT16, 'i');
+    list_append(statusPacket, (unitype) "pkt_len", 's');
+    list_append(statusPacket, (unitype) UFC_PACKET_FIELD_UINT16, 'i');
+    list_append(statusPacket, (unitype) "card_id", 's');
+    list_append(statusPacket, (unitype) UFC_PACKET_FIELD_UINT16, 'i');
+    list_append(statusPacket, (unitype) "card_type", 's');
+    list_append(statusPacket, (unitype) UFC_PACKET_FIELD_UINT16, 'i');
+    list_append(statusPacket, (unitype) "card_redirect", 's');
+    list_append(statusPacket, (unitype) UFC_PACKET_FIELD_UINT16, 'i');
+    list_append(statusPacket, (unitype) "card_status", 's');
+    list_append(statusPacket, (unitype) UFC_PACKET_FIELD_DELIMETER_UINT32, 'i');
+    list_append(statusPacket, (unitype) 0xCA11AB1E, 'u');
+    list_append(self.packetDefinitions, (unitype) statusPacket, 'r');
+
+    /* Alt packet */
+    list_t *altPacket = list_init();
+    list_append(altPacket, (unitype) "altPacket", 's');
+    list_append(altPacket, (unitype) 24, 'i'); // alt packet is 24 bytes big
+    list_append(altPacket, (unitype) UFC_PACKET_FIELD_DELIMETER_UINT32, 'i');
+    list_append(altPacket, (unitype) 0xBA5EBA11, 'u');
+    list_append(altPacket, (unitype) UFC_PACKET_FIELD_UINT32, 'i');
+    list_append(altPacket, (unitype) "timestamp", 's');
+    list_append(altPacket, (unitype) UFC_PACKET_FIELD_DELIMETER_UINT8, 'i'); // pkt_type always 8 for alt packet
+    list_append(altPacket, (unitype) 8, 'b');
+    list_append(altPacket, (unitype) UFC_PACKET_FIELD_UINT8, 'i');
+    list_append(altPacket, (unitype) "state", 's');
+    list_append(altPacket, (unitype) UFC_PACKET_FIELD_UINT16, 'i');
+    list_append(altPacket, (unitype) "pkt_len", 's');
+    list_append(altPacket, (unitype) UFC_PACKET_FIELD_FLOAT, 'i');
+    list_append(altPacket, (unitype) "temperature", 's');
+    list_append(altPacket, (unitype) UFC_PACKET_FIELD_FLOAT, 'i');
+    list_append(altPacket, (unitype) "pressure", 's');
+    list_append(altPacket, (unitype) UFC_PACKET_FIELD_DELIMETER_UINT32, 'i');
+    list_append(altPacket, (unitype) 0xCA11AB1E, 'u');
+    list_append(self.packetDefinitions, (unitype) altPacket, 'r');
+
+    /* BNO packet */
     list_t *bnoPacket = list_init();
     list_append(bnoPacket, (unitype) "bnoPacket", 's');
     list_append(bnoPacket, (unitype) 52, 'i'); // bno packet is 52 bytes big
@@ -93,12 +241,11 @@ void init() {
     list_append(bnoPacket, (unitype) UFC_PACKET_FIELD_UINT32, 'i');
     list_append(bnoPacket, (unitype) "timestamp", 's');
     list_append(bnoPacket, (unitype) UFC_PACKET_FIELD_DELIMETER_UINT8, 'i'); // pkt_type always 4 for bno packet
-    list_append(bnoPacket, (unitype) 4, 'u');
+    list_append(bnoPacket, (unitype) 4, 'b');
     list_append(bnoPacket, (unitype) UFC_PACKET_FIELD_UINT8, 'i');
     list_append(bnoPacket, (unitype) "state", 's');
     list_append(bnoPacket, (unitype) UFC_PACKET_FIELD_UINT16, 'i');
     list_append(bnoPacket, (unitype) "pkt_len", 's');
-
     list_append(bnoPacket, (unitype) UFC_PACKET_FIELD_FLOAT, 'i');
     list_append(bnoPacket, (unitype) "accel_x", 's');
     list_append(bnoPacket, (unitype) UFC_PACKET_FIELD_FLOAT, 'i');
@@ -117,15 +264,280 @@ void init() {
     list_append(bnoPacket, (unitype) "eul_roll", 's');
     list_append(bnoPacket, (unitype) UFC_PACKET_FIELD_FLOAT, 'i');
     list_append(bnoPacket, (unitype) "eul_pitch", 's');
-
     list_append(bnoPacket, (unitype) UFC_PACKET_FIELD_DELIMETER_UINT32, 'i');
     list_append(bnoPacket, (unitype) 0xCA11AB1E, 'u');
-
     list_append(self.packetDefinitions, (unitype) bnoPacket, 'r');
+
+    /* GPS packet */
+    list_t *gpsPacket = list_init();
+    list_append(gpsPacket, (unitype) "gpsPacket", 's');
+    list_append(gpsPacket, (unitype) 24, 'i'); // gps packet is 80 bytes big
+    list_append(gpsPacket, (unitype) UFC_PACKET_FIELD_DELIMETER_UINT32, 'i');
+    list_append(gpsPacket, (unitype) 0xBA5EBA11, 'u');
+    list_append(gpsPacket, (unitype) UFC_PACKET_FIELD_UINT32, 'i');
+    list_append(gpsPacket, (unitype) "timestamp", 's');
+    list_append(gpsPacket, (unitype) UFC_PACKET_FIELD_DELIMETER_UINT8, 'i'); // pkt_type always 16 for gps packet
+    list_append(gpsPacket, (unitype) 16, 'b');
+    list_append(gpsPacket, (unitype) UFC_PACKET_FIELD_UINT8, 'i');
+    list_append(gpsPacket, (unitype) "state", 's');
+    list_append(gpsPacket, (unitype) UFC_PACKET_FIELD_UINT16, 'i');
+    list_append(gpsPacket, (unitype) "pkt_len", 's');
+    list_append(gpsPacket, (unitype) UFC_PACKET_FIELD_UINT32, 'i');
+    list_append(gpsPacket, (unitype) "time_of_week", 's');
+    list_append(gpsPacket, (unitype) UFC_PACKET_FIELD_UINT8, 'i');
+    list_append(gpsPacket, (unitype) "time_hour", 's');
+    list_append(gpsPacket, (unitype) UFC_PACKET_FIELD_UINT8, 'i');
+    list_append(gpsPacket, (unitype) "time_min", 's');
+    list_append(gpsPacket, (unitype) UFC_PACKET_FIELD_UINT8, 'i');
+    list_append(gpsPacket, (unitype) "time_sec", 's');
+    list_append(gpsPacket, (unitype) UFC_PACKET_FIELD_UINT8, 'i');
+    list_append(gpsPacket, (unitype) "UNUSED", 's');
+    list_append(gpsPacket, (unitype) UFC_PACKET_FIELD_INT32, 'i');
+    list_append(gpsPacket, (unitype) "time_nanosec", 's');
+    list_append(gpsPacket, (unitype) UFC_PACKET_FIELD_UINT32, 'i');
+    list_append(gpsPacket, (unitype) "time_accuracy", 's');
+    list_append(gpsPacket, (unitype) UFC_PACKET_FIELD_FLOAT, 'i');
+    list_append(gpsPacket, (unitype) "pos_lat", 's');
+    list_append(gpsPacket, (unitype) UFC_PACKET_FIELD_FLOAT, 'i');
+    list_append(gpsPacket, (unitype) "pos_lon", 's');
+    list_append(gpsPacket, (unitype) UFC_PACKET_FIELD_UINT32, 'i');
+    list_append(gpsPacket, (unitype) "height_msl", 's');
+    list_append(gpsPacket, (unitype) UFC_PACKET_FIELD_UINT32, 'i');
+    list_append(gpsPacket, (unitype) "height_elip", 's');
+    list_append(gpsPacket, (unitype) UFC_PACKET_FIELD_UINT8, 'i');
+    list_append(gpsPacket, (unitype) "fix_type", 's');
+    list_append(gpsPacket, (unitype) UFC_PACKET_FIELD_UINT16, 'i');
+    list_append(gpsPacket, (unitype) "UNUSED", 's');
+    list_append(gpsPacket, (unitype) UFC_PACKET_FIELD_UINT8, 'i');
+    list_append(gpsPacket, (unitype) "UNUSED", 's');
+    list_append(gpsPacket, (unitype) UFC_PACKET_FIELD_UINT8, 'i');
+    list_append(gpsPacket, (unitype) "num_satellites", 's');
+    list_append(gpsPacket, (unitype) UFC_PACKET_FIELD_UINT32, 'i');
+    list_append(gpsPacket, (unitype) "vertical_accuracy", 's');
+    list_append(gpsPacket, (unitype) UFC_PACKET_FIELD_UINT32, 'i');
+    list_append(gpsPacket, (unitype) "horizontal_accuracy", 's');
+    list_append(gpsPacket, (unitype) UFC_PACKET_FIELD_FLOAT, 'i');
+    list_append(gpsPacket, (unitype) "p_DOP", 's');
+    list_append(gpsPacket, (unitype) UFC_PACKET_FIELD_INT32, 'i');
+    list_append(gpsPacket, (unitype) "vel_north", 's');
+    list_append(gpsPacket, (unitype) UFC_PACKET_FIELD_INT32, 'i');
+    list_append(gpsPacket, (unitype) "vel_east", 's');
+    list_append(gpsPacket, (unitype) UFC_PACKET_FIELD_INT32, 'i');
+    list_append(gpsPacket, (unitype) "vel_down", 's');
+    list_append(gpsPacket, (unitype) UFC_PACKET_FIELD_UINT32, 'i');
+    list_append(gpsPacket, (unitype) "vel_accuracy", 's');
+    list_append(gpsPacket, (unitype) UFC_PACKET_FIELD_DELIMETER_UINT32, 'i');
+    list_append(gpsPacket, (unitype) 0xCA11AB1E, 'u');
+    list_append(self.packetDefinitions, (unitype) gpsPacket, 'r');
+
+    /* Sensor packet */
+    list_t *sensorPacket = list_init();
+    list_append(sensorPacket, (unitype) "sensorPacket", 's');
+    list_append(sensorPacket, (unitype) 64, 'i'); // sensor packet is 64 bytes big
+    list_append(sensorPacket, (unitype) UFC_PACKET_FIELD_DELIMETER_UINT32, 'i');
+    list_append(sensorPacket, (unitype) 0xBA5EBA11, 'u');
+    list_append(sensorPacket, (unitype) UFC_PACKET_FIELD_UINT32, 'i');
+    list_append(sensorPacket, (unitype) "timestamp", 's');
+    list_append(sensorPacket, (unitype) UFC_PACKET_FIELD_DELIMETER_UINT8, 'i'); // pkt_type always 2 for sensor packet
+    list_append(sensorPacket, (unitype) 2, 'b');
+    list_append(sensorPacket, (unitype) UFC_PACKET_FIELD_UINT8, 'i');
+    list_append(sensorPacket, (unitype) "state", 's');
+    list_append(sensorPacket, (unitype) UFC_PACKET_FIELD_UINT16, 'i');
+    list_append(sensorPacket, (unitype) "pkt_len", 's');
+    list_append(sensorPacket, (unitype) UFC_PACKET_FIELD_FLOAT, 'i');
+    list_append(sensorPacket, (unitype) "low_accel_x", 's');
+    list_append(sensorPacket, (unitype) UFC_PACKET_FIELD_FLOAT, 'i');
+    list_append(sensorPacket, (unitype) "low_accel_y", 's');
+    list_append(sensorPacket, (unitype) UFC_PACKET_FIELD_FLOAT, 'i');
+    list_append(sensorPacket, (unitype) "low_accel_z", 's');
+    list_append(sensorPacket, (unitype) UFC_PACKET_FIELD_FLOAT, 'i');
+    list_append(sensorPacket, (unitype) "high_accel_x", 's');
+    list_append(sensorPacket, (unitype) UFC_PACKET_FIELD_FLOAT, 'i');
+    list_append(sensorPacket, (unitype) "high_accel_y", 's');
+    list_append(sensorPacket, (unitype) UFC_PACKET_FIELD_FLOAT, 'i');
+    list_append(sensorPacket, (unitype) "high_accel_z", 's');
+    list_append(sensorPacket, (unitype) UFC_PACKET_FIELD_FLOAT, 'i');
+    list_append(sensorPacket, (unitype) "mag_x", 's');
+    list_append(sensorPacket, (unitype) UFC_PACKET_FIELD_FLOAT, 'i');
+    list_append(sensorPacket, (unitype) "mag_y", 's');
+    list_append(sensorPacket, (unitype) UFC_PACKET_FIELD_FLOAT, 'i');
+    list_append(sensorPacket, (unitype) "mag_z", 's');
+    list_append(sensorPacket, (unitype) UFC_PACKET_FIELD_FLOAT, 'i');
+    list_append(sensorPacket, (unitype) "gyro_x", 's');
+    list_append(sensorPacket, (unitype) UFC_PACKET_FIELD_FLOAT, 'i');
+    list_append(sensorPacket, (unitype) "gyro_y", 's');
+    list_append(sensorPacket, (unitype) UFC_PACKET_FIELD_FLOAT, 'i');
+    list_append(sensorPacket, (unitype) "gyro_z", 's');
+    list_append(sensorPacket, (unitype) UFC_PACKET_FIELD_DELIMETER_UINT32, 'i');
+    list_append(sensorPacket, (unitype) 0xCA11AB1E, 'u');
+    list_append(self.packetDefinitions, (unitype) sensorPacket, 'r');
+
+    /* Pitot center packet */
+    list_t *pitotCenterPacket = list_init();
+    list_append(pitotCenterPacket, (unitype) "pitotCenterPacket", 's');
+    list_append(pitotCenterPacket, (unitype) 24, 'i'); // pitot center packet is 24 bytes big
+    list_append(pitotCenterPacket, (unitype) UFC_PACKET_FIELD_DELIMETER_UINT32, 'i');
+    list_append(pitotCenterPacket, (unitype) 0xBA5EBA11, 'u');
+    list_append(pitotCenterPacket, (unitype) UFC_PACKET_FIELD_UINT32, 'i');
+    list_append(pitotCenterPacket, (unitype) "timestamp", 's');
+    list_append(pitotCenterPacket, (unitype) UFC_PACKET_FIELD_DELIMETER_UINT8, 'i'); // pkt_type always 32 for pitot center packet
+    list_append(pitotCenterPacket, (unitype) 32, 'b');
+    list_append(pitotCenterPacket, (unitype) UFC_PACKET_FIELD_UINT8, 'i');
+    list_append(pitotCenterPacket, (unitype) "state", 's');
+    list_append(pitotCenterPacket, (unitype) UFC_PACKET_FIELD_UINT16, 'i');
+    list_append(pitotCenterPacket, (unitype) "pkt_len", 's');
+    list_append(pitotCenterPacket, (unitype) UFC_PACKET_FIELD_FLOAT, 'i');
+    list_append(pitotCenterPacket, (unitype) "center_port", 's');
+    list_append(pitotCenterPacket, (unitype) UFC_PACKET_FIELD_FLOAT, 'i');
+    list_append(pitotCenterPacket, (unitype) "static_port", 's');
+    list_append(pitotCenterPacket, (unitype) UFC_PACKET_FIELD_DELIMETER_UINT32, 'i');
+    list_append(pitotCenterPacket, (unitype) 0xCA11AB1E, 'u');
+    list_append(self.packetDefinitions, (unitype) pitotCenterPacket, 'r');
+
+    /* Pitot radial packet */
+    list_t *pitotRadialPacket = list_init();
+    list_append(pitotRadialPacket, (unitype) "pitotRadialPacket", 's');
+    list_append(pitotRadialPacket, (unitype) 32, 'i'); // pitot radial packet is 32 bytes big
+    list_append(pitotRadialPacket, (unitype) UFC_PACKET_FIELD_DELIMETER_UINT32, 'i');
+    list_append(pitotRadialPacket, (unitype) 0xBA5EBA11, 'u');
+    list_append(pitotRadialPacket, (unitype) UFC_PACKET_FIELD_UINT32, 'i');
+    list_append(pitotRadialPacket, (unitype) "timestamp", 's');
+    list_append(pitotRadialPacket, (unitype) UFC_PACKET_FIELD_DELIMETER_UINT8, 'i'); // pkt_type always 64 for pitot radial packet
+    list_append(pitotRadialPacket, (unitype) 64, 'b');
+    list_append(pitotRadialPacket, (unitype) UFC_PACKET_FIELD_UINT8, 'i');
+    list_append(pitotRadialPacket, (unitype) "state", 's');
+    list_append(pitotRadialPacket, (unitype) UFC_PACKET_FIELD_UINT16, 'i');
+    list_append(pitotRadialPacket, (unitype) "pkt_len", 's');
+    list_append(pitotRadialPacket, (unitype) UFC_PACKET_FIELD_FLOAT, 'i');
+    list_append(pitotRadialPacket, (unitype) "up_port", 's');
+    list_append(pitotRadialPacket, (unitype) UFC_PACKET_FIELD_FLOAT, 'i');
+    list_append(pitotRadialPacket, (unitype) "down_port", 's');
+    list_append(pitotRadialPacket, (unitype) UFC_PACKET_FIELD_FLOAT, 'i');
+    list_append(pitotRadialPacket, (unitype) "left_port", 's');
+    list_append(pitotRadialPacket, (unitype) UFC_PACKET_FIELD_FLOAT, 'i');
+    list_append(pitotRadialPacket, (unitype) "right_port", 's');
+    list_append(pitotRadialPacket, (unitype) UFC_PACKET_FIELD_DELIMETER_UINT32, 'i');
+    list_append(pitotRadialPacket, (unitype) 0xCA11AB1E, 'u');
+    list_append(self.packetDefinitions, (unitype) pitotRadialPacket, 'r');
 
     list_print(self.packetDefinitions);
 
-    import("C:\\Information\\Random\\BackplaneCAN\\UFCData\\FlashBackup_Card4_222617.txt");
+    for (uint32_t i = 0; i < self.packetDefinitions -> length; i++) {
+        list_append(self.packets, (unitype) list_init(), 'r');
+    }
+
+    self.graphLower = 0;
+    self.graphUpper = 
+
+    /* general */
+    self.mx = 0;
+    self.my = 0;
+    self.mw = 0;
+    self.bottomBoxHeight = self.packetDefinitions -> length * 12 + 3;
+
+    double dataColorCopy[] = {
+        19, 236, 48, // data color (channel 1)
+        0, 221, 255, // data color (channel 2)
+        200, 200, 200, // data color (channel 3)
+        232, 15, 136, // data color (channel 4)
+    };
+    memcpy(self.dataColors, dataColorCopy, sizeof(dataColorCopy));
+}
+
+void renderInfo() {
+    tt_setColor(TT_COLOR_RIBBON_TOP);
+    turtle.pena = 0.8; // 80% opacity
+    turtleRectangle(-320, -180, 320, -180 + self.bottomBoxHeight);
+    tt_setColor(TT_COLOR_TEXT_ALTERNATE);
+    for (uint32_t i = 0; i < self.packetDefinitions -> length; i++) {
+        turtleTextWriteStringf(-316, -180 + self.bottomBoxHeight - i * 12, 8, 0, "Total %ss: %d", self.packetDefinitions -> data[i].r -> data[0].s, self.packets -> data[i].r -> length);
+    }
+}
+
+void renderGraph(uint32_t packetIndex) {
+    list_t *dataList = self.packets -> data[packetIndex].r;
+    tt_setColor(TT_COLOR_TEXT);
+    turtlePenSize(1);
+    int32_t pitotIndex = -1;
+    for (uint32_t i = 0; i < self.packetDefinitions -> length; i++) {
+        if (strcmp(self.packetDefinitions -> data[i].r -> data[0].s, "pitotCenterPacket") == 0) {
+            pitotIndex = i;
+            break;
+        }
+    }
+    if (pitotIndex == -1) {
+        return;
+    }
+    if (self.packets -> data[pitotIndex].r -> length == 0) {
+        return;
+    }
+    // printf("pitotIndex: %d\n", pitotIndex);
+    list_t *pitotList = self.packets -> data[pitotIndex].r;
+    uint32_t lowerBound = 0;
+    uint32_t upperBound = pitotList -> length;
+    // uint32_t stride = 0;
+    uint32_t stride = (upperBound - lowerBound) / 2500;
+    turtlePenColor(self.dataColors[0], self.dataColors[1], self.dataColors[2]);
+    turtlePenShape("square");
+    turtleGoto(-310 + (620.0 / (upperBound - lowerBound)) * 0, pitotList -> data[0].r -> data[5].f * 180 - 290);
+    turtlePenDown();
+    /* delim, timestamp, pkt_type, state, pkt_len, center, static, footer */
+    for (uint32_t i = 0; i < upperBound; i++) {
+        float center_port = pitotList -> data[i].r -> data[5].f;
+        turtleGoto(-310 + (620.0 / (upperBound - lowerBound)) * i, center_port * 180 - 290);
+        i += stride;
+        // printf("%.6f, %.6f\n", center_port, static_port);
+    }
+    turtlePenUp();
+
+    /* render mouse */
+    int32_t packetIndex = ((upperBound - lowerBound) / 620.0) * (turtle.mouseX + 310) + lowerBound;
+    if (packetIndex < lowerBound) {
+        packetIndex = lowerBound;
+    }
+    if (packetIndex >= upperBound) {
+        packetIndex = upperBound - 1;
+    }
+    float center_port = pitotList -> data[packetIndex].r -> data[5].f;
+    turtlePenSize(3);
+    turtlePenColorAlpha(0, 0, 0, 200);
+    turtleGoto(-310 + (620.0 / (upperBound - lowerBound)) * packetIndex, 180);
+    turtlePenDown();
+    turtleGoto(-310 + (620.0 / (upperBound - lowerBound)) * packetIndex, -180);
+    turtlePenUp();
+    turtlePenShape("circle");
+
+    turtleGoto(-310 + (620.0 / (upperBound - lowerBound)) * packetIndex, center_port * 180 - 290);
+    turtlePenSize(3);
+    tt_setColor(TT_COLOR_TEXT);
+    turtlePenDown();
+    turtlePenUp();
+    tt_setColor(TT_COLOR_TEXT);
+    turtleTextWriteStringf(turtle.mouseX, 140, 6, 50, "Timestamp: %.2lf seconds", pitotList -> data[packetIndex].r -> data[1].u / 1000.0);
+    turtleTextWriteStringf(turtle.mouseX, 130, 6, 50, "Center port voltage: %fV", center_port);
+
+    /* scrolling */
+    if (self.mw > 0) {
+        /* zoom in */
+        self.graphZoom *= scaleFactor;
+        if (self.graphZoom > 100.0) {
+            self.graphZoom = 100.0;
+        }
+        self.freqLeftBound += round(buckets - (buckets / scaleFactor));
+        if (self.freqLeftBound >= self.freqRightBound) {
+            self.freqLeftBound = self.freqRightBound - 1;
+        }
+    } else if (self.mw < 0) {
+        /* zoom out */
+        self.freqZoom /= scaleFactor;
+        if (self.freqZoom < 1.0) {
+            self.freqZoom = 1.0;
+        }
+        self.freqLeftBound -= round(buckets - (buckets / scaleFactor));
+        if (self.freqLeftBound < 0) {
+            self.freqLeftBound = 0;
+        }
+    }
 }
 
 void parseRibbonOutput() {
@@ -153,6 +565,7 @@ void parseRibbonOutput() {
                 if (osToolsFileDialogPrompt(0, "") != -1) {
                     printf("Loaded data from: %s\n", osToolsFileDialog.selectedFilename);
                 }
+                import(osToolsFileDialog.selectedFilename);
             }
         }
         if (ribbonRender.output[1] == 1) { // Edit
@@ -199,6 +612,36 @@ void parseRibbonOutput() {
     }
 }
 
+void utilLoop() {
+    turtleGetMouseCoords(); // get the mouse coordinates
+    if (turtle.mouseX > 320) { // bound mouse coordinates to window coordinates
+        self.mx = 320;
+    } else {
+        if (turtle.mouseX < -320) {
+            self.mx = -320;
+        } else {
+            self.mx = turtle.mouseX;
+        }
+    }
+    if (turtle.mouseY > 180) {
+        self.my = 180;
+    } else {
+        if (turtle.mouseY < -180) {
+            self.my = -180;
+        } else {
+            self.my = turtle.mouseY;
+        }
+    }
+    self.mw = turtleMouseWheel();
+    // if (turtleKeyPressed(GLFW_KEY_UP)) {
+    //     self.mw += 1;
+    // }
+    // if (turtleKeyPressed(GLFW_KEY_DOWN)) {
+    //     self.mw -= 1;
+    // }
+    turtleClear();
+}
+
 int main(int argc, char *argv[]) {
     /* Initialize glfw */
     if (!glfwInit()) {
@@ -209,7 +652,7 @@ int main(int argc, char *argv[]) {
     /* Create a windowed mode window and its OpenGL context */
     const GLFWvidmode *monitorSize = glfwGetVideoMode(glfwGetPrimaryMonitor());
     int32_t windowHeight = monitorSize -> height * 0.85;
-    GLFWwindow *window = glfwCreateWindow(windowHeight * 16 / 9, windowHeight, "turtle demo", NULL, NULL);
+    GLFWwindow *window = glfwCreateWindow(windowHeight * 16 / 9, windowHeight, "VisualisingUFC", NULL, NULL);
     if (!window) {
         glfwTerminate();
         return -1;
@@ -222,6 +665,7 @@ int main(int argc, char *argv[]) {
     /* initialise turtleText */
     turtleTextInit("include/roberto.tgl");
     /* initialise turtleTools ribbon */
+    turtleBgColor(30, 30, 30);
     turtleToolsSetTheme(TT_THEME_DARK); // dark theme preset
     ribbonInit("include/ribbonConfig.txt");
     /* initialise osTools */
@@ -234,100 +678,16 @@ int main(int argc, char *argv[]) {
 
     init();
 
-    turtleBgColor(30, 30, 30);
-    int32_t buttonVar, switchVar = 0, dropdownVar = 0;
-    double dialVar = 0.0, sliderVar = 0.0, scrollbarVarX = 0.0, scrollbarVarY = 0.0;
-    list_t *dropdownOptions = list_init();
-    list_append(dropdownOptions, (unitype) "a", 's');
-    list_append(dropdownOptions, (unitype) "long item", 's');
-    list_append(dropdownOptions, (unitype) "very long item name", 's');
-    list_append(dropdownOptions, (unitype) "b", 's');
-    list_append(dropdownOptions, (unitype) "c", 's');
-    list_append(dropdownOptions, (unitype) "d", 's');
-    list_append(dropdownOptions, (unitype) "e", 's');
-    buttonInit("button", &buttonVar, TT_BUTTON_SHAPE_RECTANGLE, 150, 20, 10);
-    switchInit("switch", &switchVar, 150, -20, 10);
-    dialInit("dial", &dialVar, TT_DIAL_EXP, -150, 20, 10, 0, 1000, 1);
-    dialInit("dial", &dialVar, TT_DIAL_LINEAR, -150, -20, 10, 0, 1000, 1);
-    sliderInit("slider", &sliderVar, TT_SLIDER_HORIZONTAL, TT_SLIDER_ALIGN_LEFT, -100, 35, 10, 50, 0, 255, 1);
-    sliderInit("slider", &sliderVar, TT_SLIDER_HORIZONTAL, TT_SLIDER_ALIGN_CENTER, 0, 35, 10, 50, 0, 255, 1);
-    sliderInit("slider", &sliderVar, TT_SLIDER_HORIZONTAL, TT_SLIDER_ALIGN_RIGHT, 100, 35, 10, 50, 0, 255, 1);
-    sliderInit("slider", &sliderVar, TT_SLIDER_VERTICAL, TT_SLIDER_ALIGN_LEFT, -100, -35, 10, 50, 0, 255, 1);
-    sliderInit("slider", &sliderVar, TT_SLIDER_VERTICAL, TT_SLIDER_ALIGN_CENTER, 0, -35, 10, 50, 0, 255, 1);
-    sliderInit("slider", &sliderVar, TT_SLIDER_VERTICAL, TT_SLIDER_ALIGN_RIGHT, 100, -35, 10, 50, 0, 255, 1);
-    scrollbarInit(&scrollbarVarX, TT_SCROLLBAR_HORIZONTAL, 20, -170, 10, 550, 50);
-    scrollbarInit(&scrollbarVarY, TT_SCROLLBAR_VERTICAL, 310, 0, 10, 320, 33);
-    dropdownInit("dropdown", dropdownOptions, &dropdownVar, TT_DROPDOWN_ALIGN_CENTER, 0, 70, 10);
-
-    double power = 0.0, speed = 0.0, exposure = 0.0, x = 103, y = 95, z = 215;
-    int32_t xEnabled, yEnabled, zEnabled;
-    list_t *sources = list_init();
-    int sourceIndex = 0;
-    list_append(sources, (unitype) "None", 's');
-    list_append(sources, (unitype) "SP932", 's');
-    list_append(sources, (unitype) "SP932U", 's');
-    list_append(sources, (unitype) "SP928", 's');
-    list_append(sources, (unitype) "SP1203", 's');
-    list_append(sources, (unitype) "SP-1550M", 's');
-    dialInit("Power", &power, TT_DIAL_LINEAR, -150, -210, 10, 0, 100, 1);
-    dialInit("Speed", &speed, TT_DIAL_LINEAR, -100, -210, 10, 0, 1000, 1);
-    dialInit("Exposure", &exposure, TT_DIAL_EXP, -50, -210, 10, 0, 1000, 1);
-    dropdownInit("Source", sources, &sourceIndex, TT_DROPDOWN_ALIGN_LEFT, -10, -207, 10);
-    tt_slider_t *xSlider = sliderInit("", &x, TT_SLIDER_HORIZONTAL, TT_SLIDER_ALIGN_CENTER, -100, -240, 10, 100, -300, 300, 0);
-    tt_slider_t *ySlider = sliderInit("", &y, TT_SLIDER_HORIZONTAL, TT_SLIDER_ALIGN_CENTER, -100, -260, 10, 100, -300, 300, 0);
-    tt_slider_t *zSlider = sliderInit("", &z, TT_SLIDER_HORIZONTAL, TT_SLIDER_ALIGN_CENTER, -100, -280, 10, 100, -300, 300, 0);
-    switchInit("", &xEnabled, -10, -240, 10);
-    switchInit("", &yEnabled, -10, -260, 10);
-    switchInit("", &zEnabled, -10, -280, 10);
-
-    list_t *xPositions = list_init();
-    list_t *yPositions = list_init();
-    for (uint32_t i = 0; i < tt_elements.all -> length; i++) {
-        list_append(xPositions, (unitype) ((tt_button_t *) tt_elements.all -> data[i].p) -> x, 'd');
-        list_append(yPositions, (unitype) ((tt_button_t *) tt_elements.all -> data[i].p) -> y, 'd');
+    if (argc > 1) {
+        import(argv[1]);
     }
 
-    double scroll = 0.0;
-    double scrollFactor = 15;
     while (turtle.shouldClose == 0) {
         start = clock();
         turtleGetMouseCoords();
         turtleClear();
-        tt_setColor(TT_COLOR_TEXT);
-        turtleTextWriteStringf(-310, -170, 5, 0, "%.2lf, %.2lf", turtle.mouseX, turtle.mouseY);
-        turtleTextWriteString("X", xSlider -> x - xSlider -> length / 2 - xSlider -> size, xSlider -> y, xSlider -> size - 1, 100);
-        turtleTextWriteStringf(ySlider -> x + xSlider -> length / 2 + xSlider -> size, xSlider -> y, 4, 0, "%.01lf", round(x) / 10);
-        turtleTextWriteString("Y", xSlider -> x - ySlider -> length / 2 - xSlider -> size, ySlider -> y, xSlider -> size - 1, 100);
-        turtleTextWriteStringf(ySlider -> x + ySlider -> length / 2 + xSlider -> size, ySlider -> y, 4, 0, "%.01lf", round(y) / 10);
-        turtleTextWriteString("Z", zSlider -> x - zSlider -> length / 2 - xSlider -> size, zSlider -> y, xSlider -> size - 1, 100);
-        turtleTextWriteStringf(zSlider -> x + zSlider -> length / 2 + xSlider -> size, zSlider -> y, 4, 0, "%.01lf", round(z) / 10);
-
-        for (uint32_t i = 0; i < tt_elements.all -> length; i++) {
-            if (((tt_button_t *) tt_elements.all -> data[i].p) -> element != TT_ELEMENT_SCROLLBAR) {
-                ((tt_button_t *) tt_elements.all -> data[i].p) -> x = xPositions -> data[i].d - scrollbarVarX * 5;
-                ((tt_button_t *) tt_elements.all -> data[i].p) -> y = yPositions -> data[i].d + scrollbarVarY * 3.3;
-            }
-        }
-        scroll = turtleMouseWheel();
-        if (scroll != 0) {
-            if (turtleKeyPressed(GLFW_KEY_LEFT_SHIFT)) {
-                scrollbarVarX -= scroll * scrollFactor;
-                if (scrollbarVarX < 0) {
-                    scrollbarVarX = 0;
-                }
-                if (scrollbarVarX > 100) {
-                    scrollbarVarX = 100;
-                }
-            } else {
-                scrollbarVarY -= scroll * scrollFactor;
-                if (scrollbarVarY < 0) {
-                    scrollbarVarY = 0;
-                }
-                if (scrollbarVarY > 100) {
-                    scrollbarVarY = 100;
-                }
-            }
-        }
+        renderGraph(5);
+        renderInfo();
         turtleToolsUpdate(); // update turtleTools
         parseRibbonOutput(); // user defined function to use ribbon
         if (turtle.close == 1) {
