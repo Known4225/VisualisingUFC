@@ -6,12 +6,30 @@ typedef struct {
     list_t *data;
     list_t *packetDefinitions;
     list_t *packets;
+    uint32_t graphIndex;
+    double screenX;
+    double scaleX;
+    double scaleY;
+    double screenY;
+
+    /* mouse */
     double mx; // mouseX
     double my; // mouseY
     double mw; // mouseWheel
-    double bottomBoxHeight;
+    uint8_t keys[12];
+    uint8_t dragging;
+    double anchorX;
+    double anchorY;
+    double anchorScreenX;
+    double anchorScreenY;
+    double scrollFactor;
+    double scrollFactorCtrl;
+    double scrollFactorArrow;
 
+    /* UI */
+    double bottomBoxHeight;
     double dataColors[36];
+    int32_t hoverIndex;
 
 } visualising_ufc_t;
 
@@ -420,20 +438,32 @@ void init() {
     list_append(pitotRadialPacket, (unitype) 0xCA11AB1E, 'u');
     list_append(self.packetDefinitions, (unitype) pitotRadialPacket, 'r');
 
-    list_print(self.packetDefinitions);
-
     for (uint32_t i = 0; i < self.packetDefinitions -> length; i++) {
         list_append(self.packets, (unitype) list_init(), 'r');
     }
 
-    self.graphLower = 0;
-    self.graphUpper = 
-
     /* general */
+    self.screenX = 0;
+    self.screenY = 0;
+    self.scaleX = 1;
+    self.scaleY = 1;
     self.mx = 0;
     self.my = 0;
     self.mw = 0;
-    self.bottomBoxHeight = self.packetDefinitions -> length * 12 + 3;
+    self.bottomBoxHeight = self.packetDefinitions -> length * 12 + 10;
+    self.anchorX = 0;
+    self.anchorY = 0;
+    self.anchorScreenX = 0;
+    self.anchorScreenY = 0;
+    self.scrollFactor = 1.15;
+    self.scrollFactorCtrl = 2.5;
+    self.scrollFactorArrow = 1.001;
+    self.dragging = 0;
+    for (uint32_t i = 0; i < sizeof(self.keys); i++) {
+        self.keys[i] = 0;
+    }
+
+    self.hoverIndex = -1;
 
     double dataColorCopy[] = {
         19, 236, 48, // data color (channel 1)
@@ -446,97 +476,227 @@ void init() {
 
 void renderInfo() {
     tt_setColor(TT_COLOR_RIBBON_TOP);
-    turtle.pena = 0.8; // 80% opacity
+    turtle.pena = 0.5; // 50% opacity
     turtleRectangle(-320, -180, 320, -180 + self.bottomBoxHeight);
     tt_setColor(TT_COLOR_TEXT_ALTERNATE);
+    self.hoverIndex = -1;
     for (uint32_t i = 0; i < self.packetDefinitions -> length; i++) {
-        turtleTextWriteStringf(-316, -180 + self.bottomBoxHeight - i * 12, 8, 0, "Total %ss: %d", self.packetDefinitions -> data[i].r -> data[0].s, self.packets -> data[i].r -> length);
+        tt_setColor(TT_COLOR_TEXT_ALTERNATE);
+        if (self.graphIndex == i) {
+            turtlePenSize(5);
+            turtleGoto(-312, -180 + self.bottomBoxHeight - (i + 1) * 12);
+            turtlePenDown();
+            turtlePenUp();
+        }
+        double yPos = -180 + self.bottomBoxHeight - (i + 1) * 12;
+        if (self.my > yPos - 5 && self.my < yPos + 5 && self.mx > -310 && self.mx < -302 + turtleTextGetStringLengthf(8, "Total %ss: %d", self.packetDefinitions -> data[i].r -> data[0].s, self.packets -> data[i].r -> length)) {
+            tt_setColor(TT_COLOR_RIBBON_TOP);
+            self.hoverIndex = i;
+        }
+        turtleTextWriteStringf(-306, yPos, 8, 0, "Total %ss: %d", self.packetDefinitions -> data[i].r -> data[0].s, self.packets -> data[i].r -> length);
     }
 }
 
-void renderGraph(uint32_t packetIndex) {
-    list_t *dataList = self.packets -> data[packetIndex].r;
+void setGraphScale() {
+    list_t *dataList = self.packets -> data[self.graphIndex].r;
+    if (dataList -> length == 0) {
+        self.screenX = 0;
+        self.screenY = 0;
+        self.scaleX = 1;
+        self.scaleY = 1;
+        return;
+    }
+    double minValue = 100000000000000000.0;
+    double maxValue = -100000000000000000.0;
+    uint32_t stride = dataList -> length / (self.scaleX * 50000000);
+    if (stride < 1) {
+        stride = 1;
+    }
+    int32_t index = 0;
+    while (index < dataList -> length) {
+        float center_port = dataList -> data[index].r -> data[5].f;
+        if (center_port > maxValue) {
+            maxValue = center_port;
+        }
+        if (center_port < minValue) {
+            minValue = center_port;
+        }
+        index += stride;
+    }
+    self.scaleX = 640.0 / dataList -> length;
+    self.scaleY = (320 - self.bottomBoxHeight) / (maxValue - minValue);
+    self.screenX = -320;
+    self.screenY = ((maxValue + minValue) / 2) * -self.scaleY + self.bottomBoxHeight / 2;
+    printf("%lf %lf %lf %lf", self.scaleX, self.scaleY, self.screenX, self.screenY);
+}
+
+void renderGraph() {
+    list_t *dataList = self.packets -> data[self.graphIndex].r;
     tt_setColor(TT_COLOR_TEXT);
     turtlePenSize(1);
-    int32_t pitotIndex = -1;
-    for (uint32_t i = 0; i < self.packetDefinitions -> length; i++) {
-        if (strcmp(self.packetDefinitions -> data[i].r -> data[0].s, "pitotCenterPacket") == 0) {
-            pitotIndex = i;
-            break;
-        }
-    }
-    if (pitotIndex == -1) {
+    if (dataList -> length == 0) {
         return;
     }
-    if (self.packets -> data[pitotIndex].r -> length == 0) {
-        return;
+    uint32_t stride = dataList -> length / (self.scaleX * 50000000);
+    if (stride < 1) {
+        stride = 1;
     }
-    // printf("pitotIndex: %d\n", pitotIndex);
-    list_t *pitotList = self.packets -> data[pitotIndex].r;
-    uint32_t lowerBound = 0;
-    uint32_t upperBound = pitotList -> length;
-    // uint32_t stride = 0;
-    uint32_t stride = (upperBound - lowerBound) / 2500;
     turtlePenColor(self.dataColors[0], self.dataColors[1], self.dataColors[2]);
     turtlePenShape("square");
-    turtleGoto(-310 + (620.0 / (upperBound - lowerBound)) * 0, pitotList -> data[0].r -> data[5].f * 180 - 290);
-    turtlePenDown();
-    /* delim, timestamp, pkt_type, state, pkt_len, center, static, footer */
-    for (uint32_t i = 0; i < upperBound; i++) {
-        float center_port = pitotList -> data[i].r -> data[5].f;
-        turtleGoto(-310 + (620.0 / (upperBound - lowerBound)) * i, center_port * 180 - 290);
-        i += stride;
-        // printf("%.6f, %.6f\n", center_port, static_port);
+    int32_t index = 0;
+    while (index < dataList -> length) {
+        if (index * self.scaleX + self.screenX > 320) {
+            break;
+        }
+        if (index * self.scaleX + self.screenX > -340) {
+            float center_port = dataList -> data[index].r -> data[5].f;
+            turtleGoto(index * self.scaleX + self.screenX, center_port * self.scaleY + self.screenY);
+            turtlePenDown();
+        }
+        index += stride;
     }
     turtlePenUp();
 
     /* render mouse */
-    int32_t packetIndex = ((upperBound - lowerBound) / 620.0) * (turtle.mouseX + 310) + lowerBound;
-    if (packetIndex < lowerBound) {
-        packetIndex = lowerBound;
+    int32_t packetIndex = round((self.mx - self.screenX) / self.scaleX);
+    // int32_t packetIndex = ((self.graphRightIndex - self.graphLeftIndex) / (self.graphRightCoord - self.graphLeftCoord)) * (self.mx - self.graphLeftCoord) + self.graphLeftIndex;
+    if (packetIndex < 0) {
+        packetIndex = 0;
     }
-    if (packetIndex >= upperBound) {
-        packetIndex = upperBound - 1;
+    if (packetIndex >= dataList -> length) {
+        packetIndex = dataList -> length - 1;
     }
-    float center_port = pitotList -> data[packetIndex].r -> data[5].f;
+    float center_port = dataList -> data[packetIndex].r -> data[5].f;
     turtlePenSize(3);
     turtlePenColorAlpha(0, 0, 0, 200);
-    turtleGoto(-310 + (620.0 / (upperBound - lowerBound)) * packetIndex, 180);
+    turtleGoto(packetIndex * self.scaleX + self.screenX, 180);
     turtlePenDown();
-    turtleGoto(-310 + (620.0 / (upperBound - lowerBound)) * packetIndex, -180);
+    turtleGoto(packetIndex * self.scaleX + self.screenX, -180);
     turtlePenUp();
     turtlePenShape("circle");
 
-    turtleGoto(-310 + (620.0 / (upperBound - lowerBound)) * packetIndex, center_port * 180 - 290);
+    turtleGoto(packetIndex * self.scaleX + self.screenX, center_port * self.scaleY + self.screenY);
     turtlePenSize(3);
     tt_setColor(TT_COLOR_TEXT);
     turtlePenDown();
     turtlePenUp();
     tt_setColor(TT_COLOR_TEXT);
-    turtleTextWriteStringf(turtle.mouseX, 140, 6, 50, "Timestamp: %.2lf seconds", pitotList -> data[packetIndex].r -> data[1].u / 1000.0);
-    turtleTextWriteStringf(turtle.mouseX, 130, 6, 50, "Center port voltage: %fV", center_port);
+    turtleTextWriteStringf(self.mx, 140, 6, 50, "Timestamp: %.3lf seconds", dataList -> data[packetIndex].r -> data[1].u / 1000.0);
+    turtleTextWriteStringf(self.mx, 130, 6, 50, "Center port voltage: %fV", center_port);
 
     /* scrolling */
     if (self.mw > 0) {
         /* zoom in */
-        self.graphZoom *= scaleFactor;
-        if (self.graphZoom > 100.0) {
-            self.graphZoom = 100.0;
-        }
-        self.freqLeftBound += round(buckets - (buckets / scaleFactor));
-        if (self.freqLeftBound >= self.freqRightBound) {
-            self.freqLeftBound = self.freqRightBound - 1;
+        if (self.keys[3]) {
+            self.screenX -= (self.mx - self.screenX) * (self.scrollFactorArrow - 1);
+            self.scaleX *= self.scrollFactorArrow;
+            if (!self.keys[5]) {
+                self.screenY -= (self.my - self.screenY) * (self.scrollFactorArrow - 1);
+                self.scaleY *= self.scrollFactorArrow;
+            }
+        } else {
+            if (self.keys[6]) {
+                self.screenX -= (self.mx - self.screenX) * (self.scrollFactorCtrl - 1);
+                self.scaleX *= self.scrollFactorCtrl;
+                if (!self.keys[5]) {
+                    self.screenY -= (self.my - self.screenY) * (self.scrollFactorCtrl - 1);
+                    self.scaleY *= self.scrollFactorCtrl;
+                }
+            } else {
+                self.screenX -= (self.mx - self.screenX) * (self.scrollFactor - 1);
+                self.scaleX *= self.scrollFactor;
+                if (!self.keys[5]) {
+                    self.screenY -= (self.my - self.screenY) * (self.scrollFactor - 1);
+                    self.scaleY *= self.scrollFactor;
+                }
+            }
         }
     } else if (self.mw < 0) {
         /* zoom out */
-        self.freqZoom /= scaleFactor;
-        if (self.freqZoom < 1.0) {
-            self.freqZoom = 1.0;
+        if (self.keys[4]) {
+            self.screenX += (self.mx - self.screenX) * (self.scrollFactorArrow - 1) / self.scrollFactorArrow;
+            self.scaleX /= self.scrollFactorArrow;
+            if (!self.keys[5]) {
+                self.screenY += (self.my - self.screenY) * (self.scrollFactorArrow - 1) / self.scrollFactorArrow;
+                self.scaleY /= self.scrollFactorArrow;
+            }
+        } else {
+            if (self.keys[6]) {
+                self.screenX += (self.mx - self.screenX) * (self.scrollFactorCtrl - 1) / self.scrollFactorCtrl;
+                self.scaleX /= self.scrollFactorCtrl;
+                if (!self.keys[5]) {
+                    self.screenY += (self.my - self.screenY) * (self.scrollFactorCtrl - 1) / self.scrollFactorCtrl;
+                    self.scaleY /= self.scrollFactorCtrl;
+                }
+            } else {
+                self.screenX += (self.mx - self.screenX) * (self.scrollFactor - 1) / self.scrollFactor;
+                self.scaleX /= self.scrollFactor;
+                if (!self.keys[5]) {
+                    self.screenY += (self.my - self.screenY) * (self.scrollFactor - 1) / self.scrollFactor;
+                    self.scaleY /= self.scrollFactor;
+                }
+            }
         }
-        self.freqLeftBound -= round(buckets - (buckets / scaleFactor));
-        if (self.freqLeftBound < 0) {
-            self.freqLeftBound = 0;
+    }
+}
+
+void mouseTick() {
+    if (turtleMouseDown()) {
+        if (self.keys[0] == 0) {
+            self.keys[0] = 1;
+            if (self.hoverIndex >= 0) {
+                self.graphIndex = self.hoverIndex;
+                /* reset zoom */
+                self.screenX = 0;
+                self.screenY = 0;
+                self.scaleX = 1;
+                self.scaleX = 1;
+                /* auto adjust height */
+                setGraphScale();
+            }
+            if (self.my < 170 && self.my > -180 + self.bottomBoxHeight) {
+                self.dragging = 1;
+                self.anchorX = self.mx;
+                self.anchorY = self.my;
+                self.anchorScreenX = self.screenX;
+                self.anchorScreenY = self.screenY;
+            }
+        } else {
+            if (self.dragging) {
+                self.screenX = self.anchorScreenX + (self.mx - self.anchorX);
+                self.screenY = self.anchorScreenY + (self.my - self.anchorY);
+            }
         }
+    } else {
+        self.dragging = 0;
+        self.keys[0] = 0;
+    }
+    if (turtleMouseRight()) {
+        if (self.keys[1] == 0) {
+            self.keys[1] = 1;
+        }
+    } else {
+        self.keys[1] = 0;
+    }
+    if (turtleKeyPressed(GLFW_KEY_UP)) {
+        self.keys[3] = 1;
+    } else {
+        self.keys[3] = 0;
+    }
+    if (turtleKeyPressed(GLFW_KEY_DOWN)) {
+        self.keys[4] = 1;
+    } else {
+        self.keys[4] = 0;
+    }
+    if (turtleKeyPressed(GLFW_KEY_LEFT_SHIFT)) {
+        self.keys[5] = 1;
+    } else {
+        self.keys[5] = 0;
+    }
+    if (turtleKeyPressed(GLFW_KEY_LEFT_CONTROL)) {
+        self.keys[6] = 1;
+    } else {
+        self.keys[6] = 0;
     }
 }
 
@@ -633,12 +793,12 @@ void utilLoop() {
         }
     }
     self.mw = turtleMouseWheel();
-    // if (turtleKeyPressed(GLFW_KEY_UP)) {
-    //     self.mw += 1;
-    // }
-    // if (turtleKeyPressed(GLFW_KEY_DOWN)) {
-    //     self.mw -= 1;
-    // }
+    if (turtleKeyPressed(GLFW_KEY_UP)) {
+        self.mw += 1;
+    }
+    if (turtleKeyPressed(GLFW_KEY_DOWN)) {
+        self.mw -= 1;
+    }
     turtleClear();
 }
 
@@ -684,10 +844,10 @@ int main(int argc, char *argv[]) {
 
     while (turtle.shouldClose == 0) {
         start = clock();
-        turtleGetMouseCoords();
-        turtleClear();
-        renderGraph(5);
+        utilLoop();
+        renderGraph();
         renderInfo();
+        mouseTick();
         turtleToolsUpdate(); // update turtleTools
         parseRibbonOutput(); // user defined function to use ribbon
         if (turtle.close == 1) {
