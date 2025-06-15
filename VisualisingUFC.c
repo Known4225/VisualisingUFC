@@ -588,12 +588,12 @@ void setGraphScale(uint32_t graphIndex) {
     }
     int32_t index = 0;
     while (index < dataList -> length) {
-        float center_port = dataList -> data[index].r -> data[self.graph[graphIndex].field].f;
-        if (center_port > maxValue) {
-            maxValue = center_port;
+        float value = dataList -> data[index].r -> data[self.graph[graphIndex].field].f;
+        if (value > maxValue) {
+            maxValue = value;
         }
-        if (center_port < minValue) {
-            minValue = center_port;
+        if (value < minValue) {
+            minValue = value;
         }
         index += stride;
     }
@@ -605,6 +605,7 @@ void setGraphScale(uint32_t graphIndex) {
 }
 
 void renderGraph() {
+    list_t *boxContents = list_init();
     for (uint32_t i = 0; i < NUMBER_OF_GRAPH_SOURCES; i++) {
         if (self.graph[i].index == -1) {
             continue;
@@ -627,8 +628,8 @@ void renderGraph() {
                 break;
             }
             if (index * self.scaleX[i] + self.screenX[i] > -340) {
-                float center_port = dataList -> data[index].r -> data[self.graph[i].field].f;
-                turtleGoto(index * self.scaleX[i] + self.screenX[i], center_port * self.scaleY[i] + self.screenY[i]);
+                float value = dataList -> data[index].r -> data[self.graph[i].field].f;
+                turtleGoto(index * self.scaleX[i] + self.screenX[i], value * self.scaleY[i] + self.screenY[i]);
                 turtlePenDown();
             }
             index += stride;
@@ -637,14 +638,13 @@ void renderGraph() {
 
         /* render mouse */
         int32_t packetIndex = round((self.mx - self.screenX[i]) / self.scaleX[i]);
-        // int32_t packetIndex = ((self.graphRightIndex - self.graphLeftIndex) / (self.graphRightCoord - self.graphLeftCoord)) * (self.mx - self.graphLeftCoord) + self.graphLeftIndex;
         if (packetIndex < 0) {
             packetIndex = 0;
         }
         if (packetIndex >= dataList -> length) {
             packetIndex = dataList -> length - 1;
         }
-        float center_port = dataList -> data[packetIndex].r -> data[self.graph[i].field].f;
+        float value = dataList -> data[packetIndex].r -> data[self.graph[i].field].f;
         turtlePenSize(3);
         turtlePenColorAlpha(0, 0, 0, 200);
         turtleGoto(packetIndex * self.scaleX[i] + self.screenX[i], 180);
@@ -653,16 +653,45 @@ void renderGraph() {
         turtlePenUp();
         turtlePenShape("circle");
 
-        turtleGoto(packetIndex * self.scaleX[i] + self.screenX[i], center_port * self.scaleY[i] + self.screenY[i]);
+        turtleGoto(packetIndex * self.scaleX[i] + self.screenX[i], value * self.scaleY[i] + self.screenY[i]);
         turtlePenSize(3);
         tt_setColor(TT_COLOR_TEXT);
         turtlePenDown();
         turtlePenUp();
-        tt_setColor(TT_COLOR_TEXT);
+
+        char boxAdd[128];
+        sprintf(boxAdd, "Timestamp: %.3lf seconds", dataList -> data[packetIndex].r -> data[1].u / 1000.0);
+        list_append(boxContents, (unitype) boxAdd, 's');
+        sprintf(boxAdd, "%s: %f", self.packetDefinitions -> data[self.graph[i].index].r -> data[self.graph[i].field * 2 + 3].s, value);
+        list_append(boxContents, (unitype) boxAdd, 's');
     }
 
-    // turtleTextWriteStringf(self.mx, 140, 6, 50, "Timestamp: %.3lf seconds", dataList -> data[packetIndex].r -> data[1].u / 1000.0);
-    // turtleTextWriteStringf(self.mx, 130, 6, 50, "Center port voltage: %fV", center_port);
+    double maxLength = 10;
+    double boxHeight = 0;
+    double boxY = 155;
+    for (uint32_t i = 0; i < boxContents -> length; i++) {
+        double length = turtleTextGetStringLength(boxContents -> data[i].s, 6);
+        if (length > maxLength) {
+            maxLength = length;
+        }
+        boxHeight += 10;
+    }
+    maxLength += 6;
+    double boxX = self.mx - maxLength / 2;
+    if (boxX < -310) {
+        boxX = -310;
+    }
+    if (boxX + maxLength > 310) {
+        boxX = 310 - maxLength;        
+    } 
+    tt_setColor(TT_COLOR_TEXT_ALTERNATE);
+    turtle.pena = 0.2;
+    turtleRectangle(boxX, boxY, boxX + maxLength, boxY - boxHeight);
+    tt_setColor(TT_COLOR_POPUP_BOX);
+    for (uint32_t i = 0; i < boxContents -> length; i++) {
+        turtleTextWriteString(boxContents -> data[i].s, boxX + maxLength / 2, boxY - 10 * i - 5, 6, 50);
+    }
+    list_free(boxContents);
 
     /* scrolling */
     double scaleFactor = 1;
