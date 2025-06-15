@@ -505,7 +505,7 @@ void init() {
         0, 221, 255, // data color (channel 2)
         241, 241, 241, // data color (channel 3)
         232, 15, 136, // data color (channel 4)
-        72, 143, 49, // data color (channel 5)
+        255, 219, 0, // data color (channel 5)
         28, 104, 137, // data color (channel 6)
         200, 200, 200, // data color (channel 7)
         222, 66, 91, // data color (channel 8)
