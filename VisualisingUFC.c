@@ -502,9 +502,9 @@ void init() {
     self.zeroTimestamp = 0;
     self.syncTimestamp = 0;
     const double buttonXpos = 240;
-    self.matchScaleAndOffsetButton = buttonInit("Match Scale and Offset", &self.matchScaleAndOffset, TT_BUTTON_SHAPE_RECTANGLE, buttonXpos, -180 + self.bottomBoxHeight - 20, 8);
-    self.zeroTimestampButton = buttonInit("Zero Timestamp", &self.zeroTimestamp, TT_BUTTON_SHAPE_RECTANGLE, buttonXpos + 21, -180 + self.bottomBoxHeight - 35, 8);
-    self.syncTimestampButton = buttonInit("Sync Timestamp", &self.syncTimestamp, TT_BUTTON_SHAPE_RECTANGLE, buttonXpos + 21, -180 + self.bottomBoxHeight - 50, 8);
+    self.matchScaleAndOffsetButton = buttonInit("Match Scale and Offset", &self.matchScaleAndOffset, buttonXpos, -180 + self.bottomBoxHeight - 20, 8);
+    self.zeroTimestampButton = buttonInit("Zero Timestamp", &self.zeroTimestamp, buttonXpos + 21, -180 + self.bottomBoxHeight - 35, 8);
+    self.syncTimestampButton = buttonInit("Sync Timestamp", &self.syncTimestamp, buttonXpos + 21, -180 + self.bottomBoxHeight - 50, 8);
     for (uint32_t i = 0; i < NUMBER_OF_GRAPH_SOURCES; i++) {
         self.graph[i].index = -1;
         self.graph[i].field = -1;
@@ -633,9 +633,6 @@ void renderInfo() {
             if (populateSwitches) {
                 list_append(self.sourceSwitches, (unitype) (void *) switchInit("", &(self.graph[i].editable), xPos - 6, yPos, 5), 'l'); // avoid double freeing
                 ((tt_switch_t *) (self.sourceSwitches -> data[self.sourceSwitches -> length - 1].p)) -> color.colorOverride = 1;
-                ((tt_switch_t *) (self.sourceSwitches -> data[self.sourceSwitches -> length - 1].p)) -> color.color[6] = tt_themeColors[33];
-                ((tt_switch_t *) (self.sourceSwitches -> data[self.sourceSwitches -> length - 1].p)) -> color.color[7] = tt_themeColors[34];
-                ((tt_switch_t *) (self.sourceSwitches -> data[self.sourceSwitches -> length - 1].p)) -> color.color[8] = tt_themeColors[35];
                 ((tt_switch_t *) (self.sourceSwitches -> data[self.sourceSwitches -> length - 1].p)) -> color.color[9] = self.dataColors[i * 3];
                 ((tt_switch_t *) (self.sourceSwitches -> data[self.sourceSwitches -> length - 1].p)) -> color.color[10] = self.dataColors[i * 3 + 1];
                 ((tt_switch_t *) (self.sourceSwitches -> data[self.sourceSwitches -> length - 1].p)) -> color.color[11] = self.dataColors[i * 3 + 2];
