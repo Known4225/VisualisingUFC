@@ -17,8 +17,7 @@ Load a `txt` file containing raw bytes from the UFC's storage. This program incl
 ![pitotCenterFlight1](images/pitotCenterFlight1.png)
 
 TODO:
-- select sources and match scale and offset
 - select and delete outlier points
 - sync timestamp and allow timestamp offsets
-- add events
+- add placeable events
 - export to csv

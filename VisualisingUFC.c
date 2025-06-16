@@ -20,9 +20,10 @@ typedef struct {
 } graph_source_t;
 
 typedef struct {
-    list_t *data;
+    char alreadyExported[4096]; // export file name
+    list_t *dataFiles; // list of filenames
     list_t *packetDefinitions;
-    list_t *packets;
+    list_t *packets; // list of packets
     int8_t **directory;
     graph_source_t graph[NUMBER_OF_GRAPH_SOURCES];
 
@@ -47,10 +48,14 @@ typedef struct {
     list_t *fieldSwitches;
     list_t *sourceSwitches;
     tt_button_t *matchScaleAndOffsetButton;
+    tt_button_t *zeroTimestampButton;
     tt_button_t *syncTimestampButton;
     int8_t matchScaleAndOffset;
+    int8_t zeroTimestamp;
     int8_t syncTimestamp;
 } visualising_ufc_t;
+
+visualising_ufc_t self;
 
 typedef enum {
     UFC_PACKET_FIELD_DELIMETER_UINT8 = 0,
@@ -69,14 +74,12 @@ typedef enum {
     UFC_PACKET_FIELD_DOUBLE = 13,
 } ufc_packet_field_types_t;
 
-visualising_ufc_t self;
-
 int32_t matchPacket(int32_t packetIndex, uint8_t *file, uint32_t maxLength) {
     list_t *packetType = self.packetDefinitions -> data[packetIndex].r;
     if (maxLength <= packetType -> data[1].i) {
         return 0;
     }
-    uint32_t packetField = 2;
+    uint32_t packetField = 4;
     for (uint32_t i = 0; i < packetType -> data[1].i; i++) {
         if (packetField >= packetType -> length) {
             return 0;
@@ -129,7 +132,7 @@ int32_t matchPacket(int32_t packetIndex, uint8_t *file, uint32_t maxLength) {
     }
     /* packet found */
     list_t *packet = list_init();
-    packetField = 2;
+    packetField = 4;
     for (uint32_t i = 0; i < packetType -> data[1].i; i++) {
         switch (packetType -> data[packetField].i) {
             case UFC_PACKET_FIELD_DELIMETER_UINT64:
@@ -198,26 +201,25 @@ void import(char *filename) {
     /* memory map file */
     uint32_t fileSize = 0;
     uint8_t *fileData = mapFile(filename, &fileSize);
-    // printf("size of %s: %d\n", filename, fileSize);
     if (fileData == NULL) {
         return;
     }
-    // fileSize /= 15;
     for (uint32_t i = 0; i < fileSize; i++) {
         for (uint32_t j = 0; j < self.packetDefinitions -> length; j++) {
             matchPacket(j, fileData + i, fileSize - i);
         }
     }
-    // list_print(self.packets -> data[3].r);
-    // for (uint32_t i = 0; i < 100; i++) {
-    //     printf("%X ", fileData[i]);
-    // }
     unmapFile(fileData);
+}
+
+void export(char *filename) {
+    strcpy(self.alreadyExported, filename);
 }
 
 void init() {
     /* we assume that big endian machines do not exist */
-    self.data = list_init();
+    strcpy(self.alreadyExported, "null");
+    self.dataFiles = list_init();
     self.packetDefinitions = list_init();
     self.packets = list_init();
 
@@ -225,6 +227,8 @@ void init() {
     list_t *statusPacket = list_init();
     list_append(statusPacket, (unitype) "statusPacket", 's');
     list_append(statusPacket, (unitype) 24, 'i'); // status packet is 24 bytes big
+    list_append(statusPacket, (unitype) 0, 'i'); // reserved for index of dataFile source
+    list_append(statusPacket, (unitype) 0, 'i'); // reserved for shown/hidden
     list_append(statusPacket, (unitype) UFC_PACKET_FIELD_DELIMETER_UINT32, 'i');
     list_append(statusPacket, (unitype) 0xBA5EBA11, 'u');
     list_append(statusPacket, (unitype) UFC_PACKET_FIELD_UINT32, 'i');
@@ -251,6 +255,8 @@ void init() {
     list_t *altPacket = list_init();
     list_append(altPacket, (unitype) "altPacket", 's');
     list_append(altPacket, (unitype) 24, 'i'); // alt packet is 24 bytes big
+    list_append(altPacket, (unitype) 0, 'i'); // reserved for index of dataFile source
+    list_append(altPacket, (unitype) 0, 'i'); // reserved for shown/hidden
     list_append(altPacket, (unitype) UFC_PACKET_FIELD_DELIMETER_UINT32, 'i');
     list_append(altPacket, (unitype) 0xBA5EBA11, 'u');
     list_append(altPacket, (unitype) UFC_PACKET_FIELD_UINT32, 'i');
@@ -273,6 +279,8 @@ void init() {
     list_t *bnoPacket = list_init();
     list_append(bnoPacket, (unitype) "bnoPacket", 's');
     list_append(bnoPacket, (unitype) 52, 'i'); // bno packet is 52 bytes big
+    list_append(bnoPacket, (unitype) 0, 'i'); // reserved for index of dataFile source
+    list_append(bnoPacket, (unitype) 0, 'i'); // reserved for shown/hidden
     list_append(bnoPacket, (unitype) UFC_PACKET_FIELD_DELIMETER_UINT32, 'i');
     list_append(bnoPacket, (unitype) 0xBA5EBA11, 'u');
     list_append(bnoPacket, (unitype) UFC_PACKET_FIELD_UINT32, 'i');
@@ -309,6 +317,8 @@ void init() {
     list_t *gpsPacket = list_init();
     list_append(gpsPacket, (unitype) "gpsPacket", 's');
     list_append(gpsPacket, (unitype) 24, 'i'); // gps packet is 80 bytes big
+    list_append(gpsPacket, (unitype) 0, 'i'); // reserved for index of dataFile source
+    list_append(gpsPacket, (unitype) 0, 'i'); // reserved for shown/hidden
     list_append(gpsPacket, (unitype) UFC_PACKET_FIELD_DELIMETER_UINT32, 'i');
     list_append(gpsPacket, (unitype) 0xBA5EBA11, 'u');
     list_append(gpsPacket, (unitype) UFC_PACKET_FIELD_UINT32, 'i');
@@ -371,6 +381,8 @@ void init() {
     list_t *sensorPacket = list_init();
     list_append(sensorPacket, (unitype) "sensorPacket", 's');
     list_append(sensorPacket, (unitype) 64, 'i'); // sensor packet is 64 bytes big
+    list_append(sensorPacket, (unitype) 0, 'i'); // reserved for index of dataFile source
+    list_append(sensorPacket, (unitype) 0, 'i'); // reserved for shown/hidden
     list_append(sensorPacket, (unitype) UFC_PACKET_FIELD_DELIMETER_UINT32, 'i');
     list_append(sensorPacket, (unitype) 0xBA5EBA11, 'u');
     list_append(sensorPacket, (unitype) UFC_PACKET_FIELD_UINT32, 'i');
@@ -413,6 +425,8 @@ void init() {
     list_t *pitotCenterPacket = list_init();
     list_append(pitotCenterPacket, (unitype) "pitotCenterPacket", 's');
     list_append(pitotCenterPacket, (unitype) 24, 'i'); // pitot center packet is 24 bytes big
+    list_append(pitotCenterPacket, (unitype) 0, 'i'); // reserved for index of dataFile source
+    list_append(pitotCenterPacket, (unitype) 0, 'i'); // reserved for shown/hidden
     list_append(pitotCenterPacket, (unitype) UFC_PACKET_FIELD_DELIMETER_UINT32, 'i');
     list_append(pitotCenterPacket, (unitype) 0xBA5EBA11, 'u');
     list_append(pitotCenterPacket, (unitype) UFC_PACKET_FIELD_UINT32, 'i');
@@ -435,6 +449,8 @@ void init() {
     list_t *pitotRadialPacket = list_init();
     list_append(pitotRadialPacket, (unitype) "pitotRadialPacket", 's');
     list_append(pitotRadialPacket, (unitype) 32, 'i'); // pitot radial packet is 32 bytes big
+    list_append(pitotRadialPacket, (unitype) 0, 'i'); // reserved for index of dataFile source
+    list_append(pitotRadialPacket, (unitype) 0, 'i'); // reserved for shown/hidden
     list_append(pitotRadialPacket, (unitype) UFC_PACKET_FIELD_DELIMETER_UINT32, 'i');
     list_append(pitotRadialPacket, (unitype) 0xBA5EBA11, 'u');
     list_append(pitotRadialPacket, (unitype) UFC_PACKET_FIELD_UINT32, 'i');
@@ -483,13 +499,16 @@ void init() {
     self.fieldSwitches = list_init();
     self.sourceSwitches = list_init();
     self.matchScaleAndOffset = 0;
+    self.zeroTimestamp = 0;
     self.syncTimestamp = 0;
-    self.matchScaleAndOffsetButton = buttonInit("Match Scale and Offset", &self.matchScaleAndOffset, TT_BUTTON_SHAPE_RECTANGLE, 200, -180 + self.bottomBoxHeight - 20, 8);
-    self.syncTimestampButton = buttonInit("Sync Timestamp", &self.syncTimestamp, TT_BUTTON_SHAPE_RECTANGLE, 221, -180 + self.bottomBoxHeight - 35, 8);
+    const double buttonXpos = 240;
+    self.matchScaleAndOffsetButton = buttonInit("Match Scale and Offset", &self.matchScaleAndOffset, TT_BUTTON_SHAPE_RECTANGLE, buttonXpos, -180 + self.bottomBoxHeight - 20, 8);
+    self.zeroTimestampButton = buttonInit("Zero Timestamp", &self.zeroTimestamp, TT_BUTTON_SHAPE_RECTANGLE, buttonXpos + 21, -180 + self.bottomBoxHeight - 35, 8);
+    self.syncTimestampButton = buttonInit("Sync Timestamp", &self.syncTimestamp, TT_BUTTON_SHAPE_RECTANGLE, buttonXpos + 21, -180 + self.bottomBoxHeight - 50, 8);
     for (uint32_t i = 0; i < NUMBER_OF_GRAPH_SOURCES; i++) {
         self.graph[i].index = -1;
         self.graph[i].field = -1;
-        self.graph[i].editable = 1;
+        self.graph[i].editable = 0;
         self.graph[i].screenX = 0;
         self.graph[i].screenY = 0;
         self.graph[i].scaleX = 1;
@@ -507,8 +526,8 @@ void init() {
         232, 15, 136, // data color (channel 4)
         255, 219, 0, // data color (channel 5)
         28, 104, 137, // data color (channel 6)
-        200, 200, 200, // data color (channel 7)
-        222, 66, 91, // data color (channel 8)
+        255, 106, 0, // data color (channel 7)
+        244, 11, 45, // data color (channel 8)
     };
     memcpy(self.dataColors, dataColorCopy, sizeof(dataColorCopy));
     self.unselectedColor[0] = 100;
@@ -602,7 +621,7 @@ void renderInfo() {
             if (self.graph[i].editable == 0) {
                 turtle.pena = 0.5; // 50% opacity
             }
-            if (self.my > yPos - 3 && self.my < yPos + 3 && self.mx > xPos - 10 && self.mx < xPos + 2 + turtleTextGetStringLength(self.packetDefinitions -> data[self.graph[i].index].r -> data[self.graph[i].field * 2 + 3].s, 6)) {
+            if (self.my > yPos - 3 && self.my < yPos + 3 && self.mx > xPos - 10 && self.mx < xPos + 2 + turtleTextGetStringLength(self.packetDefinitions -> data[self.graph[i].index].r -> data[self.graph[i].field * 2 + 5].s, 6)) {
                 if (turtle.pena > 0) {
                     turtle.pena = 0;
                 } else {
@@ -610,7 +629,7 @@ void renderInfo() {
                 }
                 self.hoverSource = i;
             }
-            turtleTextWriteString(self.packetDefinitions -> data[self.graph[i].index].r -> data[self.graph[i].field * 2 + 3].s, xPos, yPos, 6, 0);
+            turtleTextWriteString(self.packetDefinitions -> data[self.graph[i].index].r -> data[self.graph[i].field * 2 + 5].s, xPos, yPos, 6, 0);
             if (populateSwitches) {
                 list_append(self.sourceSwitches, (unitype) (void *) switchInit("", &(self.graph[i].editable), xPos - 6, yPos, 5), 'l'); // avoid double freeing
                 ((tt_switch_t *) (self.sourceSwitches -> data[self.sourceSwitches -> length - 1].p)) -> color.colorOverride = 1;
@@ -646,12 +665,12 @@ void renderInfo() {
                     tt_setColor(TT_COLOR_TEXT_ALTERNATE);
                     self.hoverField = i;
                 }
-                if (self.directory[self.uiPacketSelected][i / 2 - 1]) {
+                if (self.directory[self.uiPacketSelected][i / 2 - 2]) {
                     tt_setColor(TT_COLOR_TEXT_ALTERNATE);
                 }
                 turtleTextWriteString(self.packetDefinitions -> data[self.uiPacketSelected].r -> data[i + 1].s, xPos, yPos, 5, 0);
                 if (populateSwitches) {
-                    list_append(self.fieldSwitches, (unitype) (void *) switchInit("", &(self.directory[self.uiPacketSelected][i / 2 - 1]), xPos - 10, yPos, 5), 'l'); // avoid double freeing
+                    list_append(self.fieldSwitches, (unitype) (void *) switchInit("", &(self.directory[self.uiPacketSelected][i / 2 - 2]), xPos - 10, yPos, 5), 'l'); // avoid double freeing
                     ((tt_switch_t *) (self.fieldSwitches -> data[self.fieldSwitches -> length - 1].p)) -> enabled = TT_ELEMENT_NO_MOUSE;
                 }
                 yPos -= 8;
@@ -694,7 +713,7 @@ void setGraphScale(uint32_t graphIndex) {
     }
     int32_t index = 0;
     while (index < dataList -> length) {
-        double value = convertToDouble(dataList -> data[index].r -> data[self.graph[graphIndex].field], self.packetDefinitions -> data[self.graph[graphIndex].index].r -> data[self.graph[graphIndex].field * 2 + 2].i);
+        double value = convertToDouble(dataList -> data[index].r -> data[self.graph[graphIndex].field], self.packetDefinitions -> data[self.graph[graphIndex].index].r -> data[self.graph[graphIndex].field * 2 + 4].i);
         if (value > maxValue) {
             maxValue = value;
         }
@@ -744,7 +763,7 @@ void renderGraph() {
         double averageOffset = 0;
         int32_t numberOfSelectedSources = 0;
         for (uint32_t i = 0; i < NUMBER_OF_GRAPH_SOURCES; i++) {
-            if (self.graph[i].editable) {
+            if (self.graph[i].index >= 0 && self.graph[i].editable) {
                 averageScale += self.graph[i].scaleY;
                 averageOffset += self.graph[i].screenY;
                 numberOfSelectedSources++;
@@ -753,9 +772,63 @@ void renderGraph() {
         averageScale /= numberOfSelectedSources;
         averageOffset /= numberOfSelectedSources;
         for (uint32_t i = 0; i < NUMBER_OF_GRAPH_SOURCES; i++) {
-            if (self.graph[i].editable) {
+            if (self.graph[i].index >= 0 && self.graph[i].editable) {
                 self.graph[i].scaleY = averageScale;
                 self.graph[i].screenY = averageOffset;
+            }
+        }
+    }
+    if (self.zeroTimestamp) {
+        /* zero timestamp at beginning of sources - TODO: zero point at the start of any source, not all sources (RETAIN SYNCED TIMESTAMPS) */
+        for (uint32_t i = 0; i < NUMBER_OF_GRAPH_SOURCES; i++) {
+            if (self.graph[i].index >= 0 && self.graph[i].editable) {
+                uint32_t timestampOffset = self.packets -> data[self.graph[i].index].r -> data[0].r -> data[1].u;
+                for (uint32_t j = 0; j < self.packets -> data[self.graph[i].index].r -> length; j++) {
+                    self.packets -> data[self.graph[i].index].r -> data[j].r -> data[1].u -= timestampOffset;
+                }
+            }
+        }
+    }
+    if (self.syncTimestamp) {
+        /* phase 1: order data in order of timestamp */
+
+
+
+        /* phase 2: sync timestamp across different data sources */
+        int32_t zeroIndex = -1;
+        double approximateTimeQuanta[NUMBER_OF_GRAPH_SOURCES] = {0}; // ms/samples - how many milliseconds per sample
+        for (uint32_t i = 0; i < NUMBER_OF_GRAPH_SOURCES; i++) {
+            if (self.graph[i].index >= 0 && self.graph[i].editable) {
+                if (zeroIndex == -1) {
+                    zeroIndex = i;
+                }
+                uint32_t segments = 16;
+                uint32_t stepSize = self.packets -> data[self.graph[i].index].r -> length / segments;
+                if (stepSize == 0) {
+                    printf("Could not sync timestamp of source %s\n", self.packetDefinitions -> data[self.graph[i].index].r -> data[self.graph[i].field * 2 + 5].s);
+                    continue;
+                }
+                uint32_t index = stepSize;
+                for (uint32_t j = 0; j < segments - 1; j++) {
+                    approximateTimeQuanta[i] += (self.packets -> data[self.graph[i].index].r -> data[index].r -> data[1].u - self.packets -> data[self.graph[i].index].r -> data[index - stepSize].r -> data[1].u) / (double) stepSize;
+                    index += stepSize;
+                }
+                approximateTimeQuanta[i] /= segments - 1;
+                printf("%s approximateTimeQuanta: %lfms\n", self.packetDefinitions -> data[self.graph[i].index].r -> data[self.graph[i].field * 2 + 5].s, approximateTimeQuanta[i]);
+            }
+        }
+        /* phase 3: calculate new scaleX and screenX */
+        if (zeroIndex != -1) {
+            double universalScale = approximateTimeQuanta[zeroIndex] / self.graph[zeroIndex].scaleX; // ms/pixels - how many milliseconds per pixel (coordinate not pixel but close enough)
+            printf("universal scale (ms/pixels): %lf\n", universalScale);
+            double zeroPoint = self.graph[zeroIndex].screenX - self.packets -> data[self.graph[zeroIndex].index].r -> data[0].r -> data[1].u / universalScale; // point of 0 timestamp (coordinate)
+            printf("zeroPoint: %lf\n", zeroPoint);
+            for (uint32_t i = 0; i < NUMBER_OF_GRAPH_SOURCES; i++) {
+                if (self.graph[i].index >= 0 && self.graph[i].editable) {
+                    self.graph[i].scaleX = (approximateTimeQuanta[i] / universalScale); // pixels/samples - how many pixels per sample
+                    self.graph[i].screenX = zeroPoint + self.packets -> data[self.graph[i].index].r -> data[0].r -> data[1].u / universalScale;
+                    printf("scaleX: %lf, screenX: %lf\n", self.graph[i].scaleX, self.graph[i].screenX);
+                }
             }
         }
     }
@@ -787,7 +860,7 @@ void renderGraph() {
                 break;
             }
             if (index * self.graph[i].scaleX + self.graph[i].screenX > -340) {
-                double value = convertToDouble(dataList -> data[index].r -> data[self.graph[i].field], self.packetDefinitions -> data[self.graph[i].index].r -> data[self.graph[i].field * 2 + 2].i);
+                double value = convertToDouble(dataList -> data[index].r -> data[self.graph[i].field], self.packetDefinitions -> data[self.graph[i].index].r -> data[self.graph[i].field * 2 + 4].i);
                 turtleGoto(index * self.graph[i].scaleX + self.graph[i].screenX, value * self.graph[i].scaleY + self.graph[i].screenY);
                 turtlePenDown();
             }
@@ -803,7 +876,7 @@ void renderGraph() {
         if (packetIndex >= dataList -> length) {
             packetIndex = dataList -> length - 1;
         }
-        double value = convertToDouble(dataList -> data[packetIndex].r -> data[self.graph[i].field], self.packetDefinitions -> data[self.graph[i].index].r -> data[self.graph[i].field * 2 + 2].i);
+        double value = convertToDouble(dataList -> data[packetIndex].r -> data[self.graph[i].field], self.packetDefinitions -> data[self.graph[i].index].r -> data[self.graph[i].field * 2 + 4].i);
         turtlePenSize(3);
         turtlePenColorAlpha(0, 0, 0, 200);
         turtleGoto(packetIndex * self.graph[i].scaleX + self.graph[i].screenX, 180);
@@ -824,7 +897,11 @@ void renderGraph() {
         list_append(boxContents, (unitype) self.dataColors[i * 3], 'd');
         list_append(boxContents, (unitype) self.dataColors[i * 3 + 1], 'd');
         list_append(boxContents, (unitype) self.dataColors[i * 3 + 2], 'd');
-        sprintf(boxAdd, "%s: %lf", self.packetDefinitions -> data[self.graph[i].index].r -> data[self.graph[i].field * 2 + 3].s, value);
+        if (self.packetDefinitions -> data[self.graph[i].index].r -> data[self.graph[i].field * 2 + 4].i == UFC_PACKET_FIELD_FLOAT || self.packetDefinitions -> data[self.graph[i].index].r -> data[self.graph[i].field * 2 + 4].i == UFC_PACKET_FIELD_DOUBLE) {
+            sprintf(boxAdd, "%s: %lf", self.packetDefinitions -> data[self.graph[i].index].r -> data[self.graph[i].field * 2 + 5].s, value);
+        } else {
+            sprintf(boxAdd, "%s: %.0lf", self.packetDefinitions -> data[self.graph[i].index].r -> data[self.graph[i].field * 2 + 5].s, round(value));
+        }
         list_append(boxContents, (unitype) boxAdd, 's');
         list_append(boxContents, (unitype) self.dataColors[i * 3], 'd');
         list_append(boxContents, (unitype) self.dataColors[i * 3 + 1], 'd');
@@ -911,16 +988,18 @@ void mouseTick() {
                 list_clear(self.sourceSwitches);
                 self.matchScaleAndOffsetButton -> enabled = TT_ELEMENT_HIDE;
                 self.syncTimestampButton -> enabled = TT_ELEMENT_HIDE;
+                self.zeroTimestampButton -> enabled = TT_ELEMENT_HIDE;
             }
             if (self.hoverField >= 0) {
-                if (self.directory[self.uiPacketSelected][self.hoverField / 2 - 1]) {
-                    self.directory[self.uiPacketSelected][self.hoverField / 2 - 1] = 0;
+                if (self.directory[self.uiPacketSelected][self.hoverField / 2 - 2]) {
+                    self.directory[self.uiPacketSelected][self.hoverField / 2 - 2] = 0;
                     self.directory[self.uiPacketSelected][0] = 0;
                     /* remove from graphSelectedSources */
                     for (uint32_t i = 0; i < NUMBER_OF_GRAPH_SOURCES; i++) {
-                        if (self.graph[i].index == self.uiPacketSelected && self.graph[i].field == self.hoverField / 2 - 1) {
+                        if (self.graph[i].index == self.uiPacketSelected && self.graph[i].field == self.hoverField / 2 - 2) {
                             self.graph[i].index = -1;
                             self.graph[i].field = -1;
+                            self.graph[i].editable = 0;
                         }
                         if (self.graph[i].index == self.uiPacketSelected) {
                             self.directory[self.uiPacketSelected][0] = 1;
@@ -931,8 +1010,9 @@ void mouseTick() {
                     for (uint32_t i = 0; i < NUMBER_OF_GRAPH_SOURCES; i++) {
                         if (self.graph[i].index == -1 && self.graph[i].field == -1) {
                             self.graph[i].index = self.uiPacketSelected;
-                            self.graph[i].field = self.hoverField / 2 - 1;
-                            self.directory[self.uiPacketSelected][self.hoverField / 2 - 1] = 1;
+                            self.graph[i].field = self.hoverField / 2 - 2;
+                            self.graph[i].editable = 1;
+                            self.directory[self.uiPacketSelected][self.hoverField / 2 - 2] = 1;
                             self.directory[self.uiPacketSelected][0] = 1;
                             setGraphScale(i);
                             break;
@@ -946,6 +1026,7 @@ void mouseTick() {
                 list_clear(self.fieldSwitches);
                 self.matchScaleAndOffsetButton -> enabled = TT_ELEMENT_ENABLED;
                 self.syncTimestampButton -> enabled = TT_ELEMENT_ENABLED;
+                self.zeroTimestampButton -> enabled = TT_ELEMENT_ENABLED;
                 self.uiPacketSelected = -1;
             }
             if (self.hoverSource >= 0) {
@@ -1019,24 +1100,26 @@ void parseRibbonOutput() {
                 printf("New\n");
             }
             if (ribbonRender.output[2] == 2) { // Save
-                if (strcmp(osToolsFileDialog.selectedFilename, "null") == 0) {
+                if (strcmp(self.alreadyExported, "null") == 0) {
+                    export(self.alreadyExported);
+                } else {
                     if (osToolsFileDialogPrompt(1, "") != -1) {
                         printf("Saved to: %s\n", osToolsFileDialog.selectedFilename);
+                        export(osToolsFileDialog.selectedFilename);
                     }
-                } else {
-                    printf("Saved to: %s\n", osToolsFileDialog.selectedFilename);
                 }
             }
             if (ribbonRender.output[2] == 3) { // Save As...
                 if (osToolsFileDialogPrompt(1, "") != -1) {
                     printf("Saved to: %s\n", osToolsFileDialog.selectedFilename);
+                    export(osToolsFileDialog.selectedFilename);
                 }
             }
             if (ribbonRender.output[2] == 4) { // Open
                 if (osToolsFileDialogPrompt(0, "") != -1) {
                     printf("Loaded data from: %s\n", osToolsFileDialog.selectedFilename);
+                    import(osToolsFileDialog.selectedFilename);
                 }
-                import(osToolsFileDialog.selectedFilename);
             }
         }
         if (ribbonRender.output[1] == 1) { // Edit
@@ -1141,6 +1224,7 @@ int main(int argc, char *argv[]) {
     /* initialise osTools */
     osToolsInit(argv[0], window); // must include argv[0] to get executableFilepath, must include GLFW window
     osToolsFileDialogAddExtension("txt"); // add txt to extension restrictions
+    osToolsFileDialogAddExtension("csv"); // add csv to extension restrictions
 
     uint32_t tps = 120; // ticks per second (locked to fps in this case)
     uint64_t tick = 0; // count number of ticks since application started
