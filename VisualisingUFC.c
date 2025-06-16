@@ -780,9 +780,13 @@ void renderGraph() {
     }
     if (self.zeroTimestamp) {
         /* zero timestamp at beginning of sources - TODO: zero point at the start of any source, not all sources (RETAIN SYNCED TIMESTAMPS) */
+        int32_t zeroIndex = -1;
         for (uint32_t i = 0; i < NUMBER_OF_GRAPH_SOURCES; i++) {
             if (self.graph[i].index >= 0 && self.graph[i].editable) {
-                uint32_t timestampOffset = self.packets -> data[self.graph[i].index].r -> data[0].r -> data[1].u;
+                if (zeroIndex == -1) {
+                    zeroIndex = i;
+                }
+                uint32_t timestampOffset = self.packets -> data[self.graph[zeroIndex].index].r -> data[0].r -> data[1].u;
                 for (uint32_t j = 0; j < self.packets -> data[self.graph[i].index].r -> length; j++) {
                     self.packets -> data[self.graph[i].index].r -> data[j].r -> data[1].u -= timestampOffset;
                 }
@@ -791,9 +795,20 @@ void renderGraph() {
     }
     if (self.syncTimestamp) {
         /* phase 1: order data in order of timestamp */
-
-
-
+        for (uint32_t i = 0; i < NUMBER_OF_GRAPH_SOURCES; i++) {
+            if (self.graph[i].index >= 0) {
+                for (uint32_t j = 1; j < self.packets -> data[self.graph[i].index].r -> length; j++) {
+                    if (self.packets -> data[self.graph[i].index].r -> data[j].r -> data[1].u < self.packets -> data[self.graph[i].index].r -> data[j - 1].r -> data[1].u) {
+                        list_t *extractPacket = list_delete_no_free(self.packets -> data[self.graph[i].index].r, j).r;
+                        int32_t placeIndex = j - 1;
+                        while (placeIndex > 0 && self.packets -> data[self.graph[i].index].r -> data[placeIndex].r -> data[1].u > extractPacket -> data[1].u) {
+                            placeIndex--;
+                        }
+                        list_insert(self.packets -> data[self.graph[i].index].r, placeIndex, (unitype) extractPacket, 'r');
+                    }
+                }
+            }
+        }
         /* phase 2: sync timestamp across different data sources */
         int32_t zeroIndex = -1;
         double approximateTimeQuanta[NUMBER_OF_GRAPH_SOURCES] = {0}; // ms/samples - how many milliseconds per sample
@@ -821,12 +836,12 @@ void renderGraph() {
         if (zeroIndex != -1) {
             double universalScale = approximateTimeQuanta[zeroIndex] / self.graph[zeroIndex].scaleX; // ms/pixels - how many milliseconds per pixel (coordinate not pixel but close enough)
             printf("universal scale (ms/pixels): %lf\n", universalScale);
-            double zeroPoint = self.graph[zeroIndex].screenX - self.packets -> data[self.graph[zeroIndex].index].r -> data[0].r -> data[1].u / universalScale; // point of 0 timestamp (coordinate)
+            double zeroPoint = self.graph[zeroIndex].screenX; // point of 0 timestamp (coordinate)
             printf("zeroPoint: %lf\n", zeroPoint);
             for (uint32_t i = 0; i < NUMBER_OF_GRAPH_SOURCES; i++) {
                 if (self.graph[i].index >= 0 && self.graph[i].editable) {
                     self.graph[i].scaleX = (approximateTimeQuanta[i] / universalScale); // pixels/samples - how many pixels per sample
-                    self.graph[i].screenX = zeroPoint + self.packets -> data[self.graph[i].index].r -> data[0].r -> data[1].u / universalScale;
+                    self.graph[i].screenX = zeroPoint + ((int64_t) self.packets -> data[self.graph[i].index].r -> data[0].r -> data[1].u - self.packets -> data[self.graph[zeroIndex].index].r -> data[0].r -> data[1].u) / universalScale /* / (self.graph[i].scaleX / self.graph[zeroIndex].scaleX) */;
                     printf("scaleX: %lf, screenX: %lf\n", self.graph[i].scaleX, self.graph[i].screenX);
                 }
             }
