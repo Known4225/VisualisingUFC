@@ -17,7 +17,8 @@ Load a `txt` file containing raw bytes from the UFC's storage. This program incl
 ![pitotCenterFlight1](images/pitotCenterFlight1.png)
 
 TODO:
-- select and delete outlier points
+- select and delete points
+- show/hide bottom bar
 - sync timestamp and allow timestamp offsets
 - add placeable events
 - export to csv

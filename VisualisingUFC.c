@@ -20,10 +20,21 @@ typedef struct {
 } graph_source_t;
 
 typedef struct {
+    uint32_t packetType; // index in packet list
+    uint32_t index; // index in list of packet list - packets[packetType][index]
+} selected_t;
+
+typedef union {
+    uint64_t selectedPacked;
+    selected_t selected;
+} selected_union_t;
+
+typedef struct {
     char alreadyExported[4096]; // export file name
     list_t *dataFiles; // list of filenames
     list_t *packetDefinitions;
-    list_t *packets; // list of packets
+    list_t *packets; // list of packets (packets -> data[packetType].r -> data[index].r -> data[field]) - hijacked start delimeter for other uses
+    list_t *selected; // list of selected packets
     int8_t **directory;
     graph_source_t graph[NUMBER_OF_GRAPH_SOURCES];
 
@@ -33,6 +44,10 @@ typedef struct {
     double mw; // mouseWheel
     uint8_t keys[12];
     uint8_t dragging;
+    uint8_t selecting;
+    double anchorSelectX;
+    double anchorSelectY;
+    double selectCoords[4]; // X min, Y min, X max, Y max
     double scrollFactor;
     double scrollFactorCtrl;
     double scrollFactorArrow;
@@ -40,6 +55,7 @@ typedef struct {
     /* UI */
     double bottomBoxHeight;
     double dataColors[90];
+    double selectedColor[3];
     double unselectedColor[3];
     int32_t hoverIndex;
     int32_t hoverField;
@@ -193,6 +209,9 @@ int32_t matchPacket(int32_t packetIndex, uint8_t *file, uint32_t maxLength) {
         }
         packetField += 2;
     }
+    if (packet -> length > 0) {
+        packet -> data[0].u &= 0xFFFFFFFE;
+    }
     list_append(self.packets -> data[packetIndex].r, (unitype) packet, 'r');
     return 1;
 }
@@ -222,13 +241,14 @@ void init() {
     self.dataFiles = list_init();
     self.packetDefinitions = list_init();
     self.packets = list_init();
+    self.selected = list_init();
 
     /* Status packet */
     list_t *statusPacket = list_init();
     list_append(statusPacket, (unitype) "statusPacket", 's');
     list_append(statusPacket, (unitype) 24, 'i'); // status packet is 24 bytes big
     list_append(statusPacket, (unitype) 0, 'i'); // reserved for index of dataFile source
-    list_append(statusPacket, (unitype) 0, 'i'); // reserved for shown/hidden
+    list_append(statusPacket, (unitype) 0, 'i'); // reserved for selected
     list_append(statusPacket, (unitype) UFC_PACKET_FIELD_DELIMETER_UINT32, 'i');
     list_append(statusPacket, (unitype) 0xBA5EBA11, 'u');
     list_append(statusPacket, (unitype) UFC_PACKET_FIELD_UINT32, 'i');
@@ -256,7 +276,7 @@ void init() {
     list_append(altPacket, (unitype) "altPacket", 's');
     list_append(altPacket, (unitype) 24, 'i'); // alt packet is 24 bytes big
     list_append(altPacket, (unitype) 0, 'i'); // reserved for index of dataFile source
-    list_append(altPacket, (unitype) 0, 'i'); // reserved for shown/hidden
+    list_append(altPacket, (unitype) 0, 'i'); // reserved for selected
     list_append(altPacket, (unitype) UFC_PACKET_FIELD_DELIMETER_UINT32, 'i');
     list_append(altPacket, (unitype) 0xBA5EBA11, 'u');
     list_append(altPacket, (unitype) UFC_PACKET_FIELD_UINT32, 'i');
@@ -280,7 +300,7 @@ void init() {
     list_append(bnoPacket, (unitype) "bnoPacket", 's');
     list_append(bnoPacket, (unitype) 52, 'i'); // bno packet is 52 bytes big
     list_append(bnoPacket, (unitype) 0, 'i'); // reserved for index of dataFile source
-    list_append(bnoPacket, (unitype) 0, 'i'); // reserved for shown/hidden
+    list_append(bnoPacket, (unitype) 0, 'i'); // reserved for selected
     list_append(bnoPacket, (unitype) UFC_PACKET_FIELD_DELIMETER_UINT32, 'i');
     list_append(bnoPacket, (unitype) 0xBA5EBA11, 'u');
     list_append(bnoPacket, (unitype) UFC_PACKET_FIELD_UINT32, 'i');
@@ -318,7 +338,7 @@ void init() {
     list_append(gpsPacket, (unitype) "gpsPacket", 's');
     list_append(gpsPacket, (unitype) 24, 'i'); // gps packet is 80 bytes big
     list_append(gpsPacket, (unitype) 0, 'i'); // reserved for index of dataFile source
-    list_append(gpsPacket, (unitype) 0, 'i'); // reserved for shown/hidden
+    list_append(gpsPacket, (unitype) 0, 'i'); // reserved for selected
     list_append(gpsPacket, (unitype) UFC_PACKET_FIELD_DELIMETER_UINT32, 'i');
     list_append(gpsPacket, (unitype) 0xBA5EBA11, 'u');
     list_append(gpsPacket, (unitype) UFC_PACKET_FIELD_UINT32, 'i');
@@ -382,7 +402,7 @@ void init() {
     list_append(sensorPacket, (unitype) "sensorPacket", 's');
     list_append(sensorPacket, (unitype) 64, 'i'); // sensor packet is 64 bytes big
     list_append(sensorPacket, (unitype) 0, 'i'); // reserved for index of dataFile source
-    list_append(sensorPacket, (unitype) 0, 'i'); // reserved for shown/hidden
+    list_append(sensorPacket, (unitype) 0, 'i'); // reserved for selected
     list_append(sensorPacket, (unitype) UFC_PACKET_FIELD_DELIMETER_UINT32, 'i');
     list_append(sensorPacket, (unitype) 0xBA5EBA11, 'u');
     list_append(sensorPacket, (unitype) UFC_PACKET_FIELD_UINT32, 'i');
@@ -426,7 +446,7 @@ void init() {
     list_append(pitotCenterPacket, (unitype) "pitotCenterPacket", 's');
     list_append(pitotCenterPacket, (unitype) 24, 'i'); // pitot center packet is 24 bytes big
     list_append(pitotCenterPacket, (unitype) 0, 'i'); // reserved for index of dataFile source
-    list_append(pitotCenterPacket, (unitype) 0, 'i'); // reserved for shown/hidden
+    list_append(pitotCenterPacket, (unitype) 0, 'i'); // reserved for selected
     list_append(pitotCenterPacket, (unitype) UFC_PACKET_FIELD_DELIMETER_UINT32, 'i');
     list_append(pitotCenterPacket, (unitype) 0xBA5EBA11, 'u');
     list_append(pitotCenterPacket, (unitype) UFC_PACKET_FIELD_UINT32, 'i');
@@ -450,7 +470,7 @@ void init() {
     list_append(pitotRadialPacket, (unitype) "pitotRadialPacket", 's');
     list_append(pitotRadialPacket, (unitype) 32, 'i'); // pitot radial packet is 32 bytes big
     list_append(pitotRadialPacket, (unitype) 0, 'i'); // reserved for index of dataFile source
-    list_append(pitotRadialPacket, (unitype) 0, 'i'); // reserved for shown/hidden
+    list_append(pitotRadialPacket, (unitype) 0, 'i'); // reserved for selected
     list_append(pitotRadialPacket, (unitype) UFC_PACKET_FIELD_DELIMETER_UINT32, 'i');
     list_append(pitotRadialPacket, (unitype) 0xBA5EBA11, 'u');
     list_append(pitotRadialPacket, (unitype) UFC_PACKET_FIELD_UINT32, 'i');
@@ -488,6 +508,7 @@ void init() {
     self.scrollFactorCtrl = 2.5;
     self.scrollFactorArrow = 1.001;
     self.dragging = 0;
+    self.selecting = 0;
     for (uint32_t i = 0; i < sizeof(self.keys); i++) {
         self.keys[i] = 0;
     }
@@ -533,6 +554,10 @@ void init() {
     self.unselectedColor[0] = 100;
     self.unselectedColor[1] = 100;
     self.unselectedColor[2] = 100;
+
+    self.selectedColor[0] = 140;
+    self.selectedColor[1] = 140;
+    self.selectedColor[2] = 140;
 }
 
 double convertToDouble(unitype value, int32_t type) {
@@ -865,15 +890,36 @@ void renderGraph() {
         } else {
             turtlePenColor(self.dataColors[i * 3], self.dataColors[i * 3 + 1], self.dataColors[i * 3 + 2]);
         }
+        double saveColor[3] = {turtle.penr, turtle.peng, turtle.penb};
+        /* render data */
         turtlePenShape("triangle");
-        int32_t index = 0;
+        double oldX;
+        double oldY;
+        int32_t index = stride;
+        if (dataList -> length > 0) {
+            double value = convertToDouble(dataList -> data[0].r -> data[self.graph[i].field], self.packetDefinitions -> data[self.graph[i].index].r -> data[self.graph[i].field * 2 + 4].i);
+            oldX = self.graph[i].screenX;
+            oldY = value * self.graph[i].scaleY + self.graph[i].screenY;
+        }
         while (index < dataList -> length) {
-            if (index * self.graph[i].scaleX + self.graph[i].screenX > 320) {
+            if (index * self.graph[i].scaleX + self.graph[i].screenX > 340) {
                 break;
             }
             if (index * self.graph[i].scaleX + self.graph[i].screenX > -340) {
                 double value = convertToDouble(dataList -> data[index].r -> data[self.graph[i].field], self.packetDefinitions -> data[self.graph[i].index].r -> data[self.graph[i].field * 2 + 4].i);
-                turtleGoto(index * self.graph[i].scaleX + self.graph[i].screenX, value * self.graph[i].scaleY + self.graph[i].screenY);
+                double x = index * self.graph[i].scaleX + self.graph[i].screenX;
+                double y = value * self.graph[i].scaleY + self.graph[i].screenY;
+                if (dataList -> data[index].r -> data[0].u & 0x1 || dataList -> data[index - stride].r -> data[0].u & 0x1 || (self.selecting && self.graph[i].editable && ((x > self.selectCoords[0] && x < self.selectCoords[2] && y > self.selectCoords[1] && y < self.selectCoords[3]) ||
+                    (oldX > self.selectCoords[0] && oldX < self.selectCoords[2] && oldY > self.selectCoords[1] && oldY < self.selectCoords[3])))) {
+                    turtlePenColor(self.unselectedColor[0], self.unselectedColor[1], self.unselectedColor[2]);
+                } else {
+                    turtle.penr = saveColor[0];
+                    turtle.peng = saveColor[1];
+                    turtle.penb = saveColor[2];
+                }
+                turtleGoto(oldX, oldY);
+                oldX = x;
+                oldY = y;
                 turtlePenDown();
             }
             index += stride;
@@ -991,6 +1037,7 @@ void renderGraph() {
 void mouseTick() {
     if (turtleMouseDown()) {
         if (self.keys[0] == 0) {
+            /* first tick */
             self.keys[0] = 1;
             if (self.hoverIndex >= 0) {
                 self.uiPacketSelected = self.hoverIndex;
@@ -1049,18 +1096,30 @@ void mouseTick() {
                 }
             }
             if (self.my < 170 && self.my > -180 + self.bottomBoxHeight) {
-                self.dragging = 1;
-                for (uint32_t i = 0; i < NUMBER_OF_GRAPH_SOURCES; i++) {
-                    if (self.graph[i].editable == 0) {
-                        continue;
+                for (uint32_t i = 0; i < self.selected -> length; i++) {
+                    selected_t selectedPacket = ((selected_union_t) self.selected -> data[i].l).selected;
+                    self.packets -> data[selectedPacket.packetType].r -> data[selectedPacket.index].r -> data[0].u &= 0xFFFFFFFE;
+                }
+                list_clear(self.selected);
+                if (self.keys[5]) {
+                    self.selecting = 1;
+                    self.anchorSelectX = self.mx;
+                    self.anchorSelectY = self.my;
+                } else {
+                    self.dragging = 1;
+                    for (uint32_t i = 0; i < NUMBER_OF_GRAPH_SOURCES; i++) {
+                        if (self.graph[i].editable == 0) {
+                            continue;
+                        }
+                        self.graph[i].anchorX = self.mx;
+                        self.graph[i].anchorY = self.my;
+                        self.graph[i].anchorScreenX = self.graph[i].screenX;
+                        self.graph[i].anchorScreenY = self.graph[i].screenY;
                     }
-                    self.graph[i].anchorX = self.mx;
-                    self.graph[i].anchorY = self.my;
-                    self.graph[i].anchorScreenX = self.graph[i].screenX;
-                    self.graph[i].anchorScreenY = self.graph[i].screenY;
                 }
             }
         } else {
+            /* mouse hold */
             if (self.dragging) {
                 for (uint32_t i = 0; i < NUMBER_OF_GRAPH_SOURCES; i++) {
                     if (self.graph[i].editable == 0) {
@@ -1070,16 +1129,79 @@ void mouseTick() {
                     self.graph[i].screenY = self.graph[i].anchorScreenY + (self.my - self.graph[i].anchorY);
                 }
             }
+            if (self.selecting) {
+                turtlePenSize(1);
+                turtlePenColor(self.selectedColor[0], self.selectedColor[1], self.selectedColor[2]);
+                turtleGoto(self.anchorSelectX, self.anchorSelectY);
+                turtlePenDown();
+                turtleGoto(self.mx, self.anchorSelectY);
+                turtleGoto(self.mx, self.my);
+                turtleGoto(self.anchorSelectX, self.my);
+                turtleGoto(self.anchorSelectX, self.anchorSelectY);
+                turtlePenUp();
+                if (self.mx > self.anchorSelectX) {
+                    self.selectCoords[0] = self.anchorSelectX;
+                    self.selectCoords[2] = self.mx;
+                } else {
+                    self.selectCoords[0] = self.mx;
+                    self.selectCoords[2] = self.anchorSelectX;
+                }
+                if (self.my > self.anchorSelectY) {
+                    self.selectCoords[1] = self.anchorSelectY;
+                    self.selectCoords[3] = self.my;
+                } else {
+                    self.selectCoords[1] = self.my;
+                    self.selectCoords[3] = self.anchorSelectY;
+                }
+            }
         }
     } else {
+        /* left click released */
         self.dragging = 0;
+        if (self.selecting) {
+            self.selecting = 0;
+            /* add all selected to selected list */
+            for (uint32_t i = 0; i < NUMBER_OF_GRAPH_SOURCES; i++) {
+                if (self.graph[i].index == -1 || self.graph[i].editable == 0) {
+                    continue;
+                }
+                list_t *dataList = self.packets -> data[self.graph[i].index].r;
+                if (dataList -> length == 0) {
+                    return;
+                }
+                selected_t newItem;
+                newItem.packetType = self.graph[i].index;
+                for (uint32_t index = 0; index < dataList -> length; index++) {
+                    if (index * self.graph[i].scaleX + self.graph[i].screenX > 340) {
+                        break;
+                    }
+                    if (index * self.graph[i].scaleX + self.graph[i].screenX > -340) {
+                        double value = convertToDouble(dataList -> data[index].r -> data[self.graph[i].field], self.packetDefinitions -> data[self.graph[i].index].r -> data[self.graph[i].field * 2 + 4].i);
+                        double x = index * self.graph[i].scaleX + self.graph[i].screenX;
+                        double y = value * self.graph[i].scaleY + self.graph[i].screenY;
+                        if (x > self.selectCoords[0] && x < self.selectCoords[2] && y > self.selectCoords[1] && y < self.selectCoords[3]) {
+                            /* add to selected */
+                            if ((dataList -> data[index].r -> data[0].u & 0x1) == 0) {
+                                dataList -> data[index].r -> data[0].u |= 0x1;
+                                newItem.index = index;
+                                list_append(self.selected, (unitype) ((selected_union_t) newItem).selectedPacked, 'l');
+                            }
+                        }
+                    }
+                }
+            }
+        }
         self.keys[0] = 0;
     }
     if (turtleMouseRight()) {
         if (self.keys[1] == 0) {
+            /* first tick */
             self.keys[1] = 1;
+        } else {
+            /* right click held */
         }
     } else {
+        /* right click released */
         self.keys[1] = 0;
     }
     if (turtleKeyPressed(GLFW_KEY_UP)) {
@@ -1101,6 +1223,18 @@ void mouseTick() {
         self.keys[6] = 1;
     } else {
         self.keys[6] = 0;
+    }
+    if (turtleKeyPressed(GLFW_KEY_DELETE) || turtleKeyPressed(GLFW_KEY_BACKSPACE)) {
+        if (self.keys[7] == 0) {
+            self.keys[7] = 1;
+            for (int32_t i = self.selected -> length - 1; i > -1; i--) {
+                selected_t selectedPacket = ((selected_union_t) self.selected -> data[i].l).selected;
+                list_delete(self.packets -> data[selectedPacket.packetType].r, selectedPacket.index);
+                list_pop(self.selected);
+            }
+        }
+    } else {
+        self.keys[7] = 0;
     }
 }
 
