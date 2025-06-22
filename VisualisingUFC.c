@@ -336,7 +336,7 @@ void init() {
     /* GPS packet */
     list_t *gpsPacket = list_init();
     list_append(gpsPacket, (unitype) "gpsPacket", 's');
-    list_append(gpsPacket, (unitype) 24, 'i'); // gps packet is 80 bytes big
+    list_append(gpsPacket, (unitype) 80, 'i'); // gps packet is 80 bytes big
     list_append(gpsPacket, (unitype) 0, 'i'); // reserved for index of dataFile source
     list_append(gpsPacket, (unitype) 0, 'i'); // reserved for selected
     list_append(gpsPacket, (unitype) UFC_PACKET_FIELD_DELIMETER_UINT32, 'i');
@@ -373,12 +373,10 @@ void init() {
     list_append(gpsPacket, (unitype) "height_elip", 's');
     list_append(gpsPacket, (unitype) UFC_PACKET_FIELD_UINT8, 'i');
     list_append(gpsPacket, (unitype) "fix_type", 's');
-    list_append(gpsPacket, (unitype) UFC_PACKET_FIELD_UINT16, 'i');
-    list_append(gpsPacket, (unitype) -1, 'u');
-    list_append(gpsPacket, (unitype) UFC_PACKET_FIELD_UINT8, 'i');
-    list_append(gpsPacket, (unitype) -1, 'u');
     list_append(gpsPacket, (unitype) UFC_PACKET_FIELD_UINT8, 'i');
     list_append(gpsPacket, (unitype) "num_satellites", 's');
+    list_append(gpsPacket, (unitype) UFC_PACKET_FIELD_UINT16, 'i');
+    list_append(gpsPacket, (unitype) -1, 'u');
     list_append(gpsPacket, (unitype) UFC_PACKET_FIELD_UINT32, 'i');
     list_append(gpsPacket, (unitype) "vertical_accuracy", 's');
     list_append(gpsPacket, (unitype) UFC_PACKET_FIELD_UINT32, 'i');
@@ -897,6 +895,7 @@ void renderGraph() {
         double oldY;
         int32_t index = stride;
         if (dataList -> length > 0) {
+            // printf("type: %d\n", self.packetDefinitions -> data[self.graph[i].index].r -> data[self.graph[i].field * 2 + 4].i);
             double value = convertToDouble(dataList -> data[0].r -> data[self.graph[i].field], self.packetDefinitions -> data[self.graph[i].index].r -> data[self.graph[i].field * 2 + 4].i);
             oldX = self.graph[i].screenX;
             oldY = value * self.graph[i].scaleY + self.graph[i].screenY;
