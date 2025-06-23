@@ -1197,6 +1197,19 @@ void mouseTick() {
         if (self.keys[1] == 0) {
             /* first tick */
             self.keys[1] = 1;
+            for (int32_t i = 0; i < self.packets -> length; i++) {
+                char filename[128];
+                sprintf(filename, "pitotData_packet_%d.csv", i);
+                FILE *fp = fopen(filename, "w");
+                for (int32_t j = 0; j < self.packets -> data[i].r -> length; j++) {
+                    if (self.packets -> data[i].r -> data[j].r -> data[1].i <= 3800000)
+                    temp_f_list_print(fp, self.packets -> data[i].r -> data[j].r);
+                    // for (int32_t k = 0; k < self.packets -> data[i].r -> data[j].r -> length; k++) {
+                    //     fprintf(fp, "");
+                    // }
+                }
+                fclose(fp);
+            }
         } else {
             /* right click held */
         }

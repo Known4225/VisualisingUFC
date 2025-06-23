@@ -490,6 +490,62 @@ void list_print(list_t *list) {
     }
 }
 
+void temp_unitype_f_print(FILE *fp, unitype item, char type) {
+    switch (type) {
+        case 'i':
+            fprintf(fp, "%d", item.i);
+        break;
+        case 'u':
+            fprintf(fp, "%u", item.u);
+        break;
+        case 'f':
+            fprintf(fp, "%f", item.f);
+        break;
+        case 'd':
+            fprintf(fp, "%lf", item.d);
+        break;
+        case 'c':
+            fprintf(fp, "%c", item.c);
+        break;
+        case 's':
+            fprintf(fp, "%s", item.s);
+        break;
+        case 'p':
+            fprintf(fp, "%p", item.p);
+        break;
+        case 'r':
+            list_print_emb(item.r);
+        break;
+        case 'l':
+            fprintf(fp, "%llu", item.l);
+        break;
+        case 'h':
+            fprintf(fp, "%hi", item.h);
+        break;
+        case 'b':
+            fprintf(fp, "%hi", item.b);
+        break;
+        default:
+            printf("temp_unitype_f_print - type not recognized\n");
+            return;
+    }
+}
+
+void temp_f_list_print(FILE *fp, list_t *list) {
+    if (list -> length == 0) {
+        fprintf(fp, "\n");
+        return;
+    }
+    for (uint32_t i = 0; i < list -> length; i++) {
+        temp_unitype_f_print(fp, list -> data[i], list -> type[i]);
+        if (i == list -> length - 1) {
+            fprintf(fp, "\n");
+        } else {
+            fprintf(fp, ", ");
+        }
+    }
+}
+
 /* prints the list but without closing \n */
 void list_print_emb(list_t *list) {
     printf("[");
