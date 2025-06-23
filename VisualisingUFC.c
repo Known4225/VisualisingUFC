@@ -35,7 +35,7 @@ typedef struct {
     list_t *packetDefinitions;
     list_t *packets; // list of packets (packets -> data[packetType].r -> data[index].r -> data[field]) - hijacked start delimeter for other uses
     list_t *selected; // list of selected packets
-    int8_t **directory;
+    int8_t **directory; // array of rendered fields
     graph_source_t graph[NUMBER_OF_GRAPH_SOURCES];
 
     /* mouse */
@@ -69,6 +69,7 @@ typedef struct {
     int8_t matchScaleAndOffset;
     int8_t zeroTimestamp;
     int8_t syncTimestamp;
+    int8_t renderByTimestamp; // renderByTimestamp or renderByIndex
 } visualising_ufc_t;
 
 visualising_ufc_t self;
@@ -233,6 +234,13 @@ void import(char *filename) {
 
 void export(char *filename) {
     strcpy(self.alreadyExported, filename);
+    FILE *fp = fopen(filename, "w");
+    for (int32_t i = 0; i < self.packets -> length; i++) {
+        for (int32_t j = 0; j < self.packets -> data[i].r -> length; j++) {
+            list_fprint(fp, self.packets -> data[i].r -> data[j].r);
+        }
+    }
+    fclose(fp);
 }
 
 void init() {
@@ -524,6 +532,7 @@ void init() {
     self.matchScaleAndOffsetButton = buttonInit("Match Scale and Offset", &self.matchScaleAndOffset, buttonXpos, -180 + self.bottomBoxHeight - 20, 8);
     self.zeroTimestampButton = buttonInit("Zero Timestamp", &self.zeroTimestamp, buttonXpos + 21, -180 + self.bottomBoxHeight - 35, 8);
     self.syncTimestampButton = buttonInit("Sync Timestamp", &self.syncTimestamp, buttonXpos + 21, -180 + self.bottomBoxHeight - 50, 8);
+    self.renderByTimestamp = 1;
     for (uint32_t i = 0; i < NUMBER_OF_GRAPH_SOURCES; i++) {
         self.graph[i].index = -1;
         self.graph[i].field = -1;
@@ -725,9 +734,16 @@ void setGraphScale(uint32_t graphIndex) {
         self.graph[graphIndex].scaleY = 1;
         return;
     }
-    double minValue = 100000000000000000.0;
+    double minValue = 100000000000000000.0; // FLOAT_MAX
     double maxValue = -100000000000000000.0;
-    uint32_t stride = dataList -> length / (self.graph[graphIndex].scaleX * 50000000);
+    int32_t maxTimestamp = -2147483648;
+    int32_t minTimestamp = 2147483647;
+    uint32_t stride = 0;
+    if (self.renderByTimestamp) {
+        stride = dataList -> length / (self.graph[graphIndex].scaleX * 1000000000);
+    } else {
+        stride = dataList -> length / (self.graph[graphIndex].scaleX * 50000000);
+    }
     if (stride < 1) {
         stride = 1;
     }
@@ -739,6 +755,12 @@ void setGraphScale(uint32_t graphIndex) {
         }
         if (value < minValue) {
             minValue = value;
+        }
+        if (dataList -> data[index].r -> data[1].i > maxTimestamp) {
+            maxTimestamp = dataList -> data[index].r -> data[1].i;
+        }
+        if (dataList -> data[index].r -> data[1].i < minTimestamp) {
+            minTimestamp = dataList -> data[index].r -> data[1].i;
         }
         index += stride;
     }
@@ -756,12 +778,22 @@ void setGraphScale(uint32_t graphIndex) {
             }
         }
     }
-    self.graph[graphIndex].scaleX = 640.0 / dataList -> length;
-    self.graph[graphIndex].screenX = -320;
+    if (self.renderByTimestamp) {
+        self.graph[graphIndex].scaleX = 620.0 / (maxTimestamp - minTimestamp);
+        self.graph[graphIndex].screenX = -310 + -minTimestamp * self.graph[graphIndex].scaleX;
+    } else {
+        self.graph[graphIndex].scaleX = 620.0 / dataList -> length;
+        self.graph[graphIndex].screenX = -310;
+    }
     if (subPriority != -1) {
-        double packetNumberRatio = (double) self.packets -> data[self.graph[subPriority].index].r -> length / self.packets -> data[self.graph[graphIndex].index].r -> length;
-        self.graph[graphIndex].scaleX = self.graph[subPriority].scaleX * packetNumberRatio;
-        self.graph[graphIndex].screenX = self.graph[subPriority].screenX;
+        if (self.renderByTimestamp) {
+            self.graph[graphIndex].scaleX = self.graph[subPriority].scaleX;
+            self.graph[graphIndex].screenX = self.graph[subPriority].screenX;
+        } else {
+            double packetNumberRatio = (double) self.packets -> data[self.graph[subPriority].index].r -> length / self.packets -> data[self.graph[graphIndex].index].r -> length;
+            self.graph[graphIndex].scaleX = self.graph[subPriority].scaleX * packetNumberRatio;
+            self.graph[graphIndex].screenX = self.graph[subPriority].screenX;
+        }
     }
     if (topPriority != -1) {
         self.graph[graphIndex].scaleX = self.graph[topPriority].scaleX;
@@ -829,40 +861,73 @@ void renderGraph() {
                 }
             }
         }
-        /* phase 2: sync timestamp across different data sources */
-        int32_t zeroIndex = -1;
-        double approximateTimeQuanta[NUMBER_OF_GRAPH_SOURCES] = {0}; // ms/samples - how many milliseconds per sample
+        /* phase 2: remove duplicates */
         for (uint32_t i = 0; i < NUMBER_OF_GRAPH_SOURCES; i++) {
-            if (self.graph[i].index >= 0 && self.graph[i].editable) {
-                if (zeroIndex == -1) {
-                    zeroIndex = i;
+            if (self.graph[i].index >= 0) {
+                for (uint32_t j = 1; j < self.packets -> data[self.graph[i].index].r -> length; j++) {
+                    if (self.packets -> data[self.graph[i].index].r -> data[j].r -> data[1].u == self.packets -> data[self.graph[i].index].r -> data[j - 1].r -> data[1].u) {
+                        list_delete(self.packets -> data[self.graph[i].index].r, j);
+                        j--;
+                    }
                 }
-                uint32_t segments = 16;
-                uint32_t stepSize = self.packets -> data[self.graph[i].index].r -> length / segments;
-                if (stepSize == 0) {
-                    printf("Could not sync timestamp of source %s\n", self.packetDefinitions -> data[self.graph[i].index].r -> data[self.graph[i].field * 2 + 5].s);
-                    continue;
-                }
-                uint32_t index = stepSize;
-                for (uint32_t j = 0; j < segments - 1; j++) {
-                    approximateTimeQuanta[i] += (self.packets -> data[self.graph[i].index].r -> data[index].r -> data[1].u - self.packets -> data[self.graph[i].index].r -> data[index - stepSize].r -> data[1].u) / (double) stepSize;
-                    index += stepSize;
-                }
-                approximateTimeQuanta[i] /= segments - 1;
-                printf("%s approximateTimeQuanta: %lfms\n", self.packetDefinitions -> data[self.graph[i].index].r -> data[self.graph[i].field * 2 + 5].s, approximateTimeQuanta[i]);
             }
         }
-        /* phase 3: calculate new scaleX and screenX */
-        if (zeroIndex != -1) {
-            double universalScale = approximateTimeQuanta[zeroIndex] / self.graph[zeroIndex].scaleX; // ms/pixels - how many milliseconds per pixel (coordinate not pixel but close enough)
-            printf("universal scale (ms/pixels): %lf\n", universalScale);
-            double zeroPoint = self.graph[zeroIndex].screenX; // point of 0 timestamp (coordinate)
-            printf("zeroPoint: %lf\n", zeroPoint);
+        if (self.renderByTimestamp) {
+            /* phase 3: match scale */
+            double averageXScale = 0;
+            double averageXOffset = 0;
+            int32_t numberOfSelectedSources = 0;
             for (uint32_t i = 0; i < NUMBER_OF_GRAPH_SOURCES; i++) {
                 if (self.graph[i].index >= 0 && self.graph[i].editable) {
-                    self.graph[i].scaleX = (approximateTimeQuanta[i] / universalScale); // pixels/samples - how many pixels per sample
-                    self.graph[i].screenX = zeroPoint + ((int64_t) self.packets -> data[self.graph[i].index].r -> data[0].r -> data[1].u - self.packets -> data[self.graph[zeroIndex].index].r -> data[0].r -> data[1].u) / universalScale /* / (self.graph[i].scaleX / self.graph[zeroIndex].scaleX) */;
-                    printf("scaleX: %lf, screenX: %lf\n", self.graph[i].scaleX, self.graph[i].screenX);
+                    averageXScale += self.graph[i].scaleX;
+                    averageXOffset += self.graph[i].screenX;
+                    numberOfSelectedSources++;
+                }
+            }
+            averageXScale /= numberOfSelectedSources;
+            averageXOffset /= numberOfSelectedSources;
+            for (uint32_t i = 0; i < NUMBER_OF_GRAPH_SOURCES; i++) {
+                if (self.graph[i].index >= 0 && self.graph[i].editable) {
+                    self.graph[i].scaleX = averageXScale;
+                    self.graph[i].screenX = averageXOffset;
+                }
+            }
+        } else {
+            /* phase 3: sync timestamp across different data sources */
+            int32_t zeroIndex = -1;
+            double approximateTimeQuanta[NUMBER_OF_GRAPH_SOURCES] = {0}; // ms/samples - how many milliseconds per sample
+            for (uint32_t i = 0; i < NUMBER_OF_GRAPH_SOURCES; i++) {
+                if (self.graph[i].index >= 0 && self.graph[i].editable) {
+                    if (zeroIndex == -1) {
+                        zeroIndex = i;
+                    }
+                    uint32_t segments = 16;
+                    uint32_t stepSize = self.packets -> data[self.graph[i].index].r -> length / segments;
+                    if (stepSize == 0) {
+                        printf("Could not sync timestamp of source %s\n", self.packetDefinitions -> data[self.graph[i].index].r -> data[self.graph[i].field * 2 + 5].s);
+                        continue;
+                    }
+                    uint32_t index = stepSize;
+                    for (uint32_t j = 0; j < segments - 1; j++) {
+                        approximateTimeQuanta[i] += (self.packets -> data[self.graph[i].index].r -> data[index].r -> data[1].u - self.packets -> data[self.graph[i].index].r -> data[index - stepSize].r -> data[1].u) / (double) stepSize;
+                        index += stepSize;
+                    }
+                    approximateTimeQuanta[i] /= segments - 1;
+                    printf("%s approximateTimeQuanta: %lfms\n", self.packetDefinitions -> data[self.graph[i].index].r -> data[self.graph[i].field * 2 + 5].s, approximateTimeQuanta[i]);
+                }
+            }
+            /* phase 4: calculate new scaleX and screenX */
+            if (zeroIndex != -1) {
+                double universalScale = approximateTimeQuanta[zeroIndex] / self.graph[zeroIndex].scaleX; // ms/pixels - how many milliseconds per pixel (coordinate not pixel but close enough)
+                printf("universal scale (ms/pixels): %lf\n", universalScale);
+                double zeroPoint = self.graph[zeroIndex].screenX; // point of 0 timestamp (coordinate)
+                printf("zeroPoint: %lf\n", zeroPoint);
+                for (uint32_t i = 0; i < NUMBER_OF_GRAPH_SOURCES; i++) {
+                    if (self.graph[i].index >= 0 && self.graph[i].editable) {
+                        self.graph[i].scaleX = (approximateTimeQuanta[i] / universalScale); // pixels/samples - how many pixels per sample
+                        self.graph[i].screenX = zeroPoint + ((int64_t) self.packets -> data[self.graph[i].index].r -> data[0].r -> data[1].u - self.packets -> data[self.graph[zeroIndex].index].r -> data[0].r -> data[1].u) / universalScale /* / (self.graph[i].scaleX / self.graph[zeroIndex].scaleX) */;
+                        printf("scaleX: %lf, screenX: %lf\n", self.graph[i].scaleX, self.graph[i].screenX);
+                    }
                 }
             }
         }
@@ -878,7 +943,12 @@ void renderGraph() {
         if (dataList -> length == 0) {
             return;
         }
-        uint32_t stride = dataList -> length / (self.graph[i].scaleX * 50000000);
+        uint32_t stride = 0;
+        if (self.renderByTimestamp) {
+            stride = dataList -> length / (self.graph[i].scaleX * 1000000000);
+        } else {
+            stride = dataList -> length / (self.graph[i].scaleX * 50000000);
+        }
         if (stride < 1) {
             stride = 1;
         }
@@ -897,16 +967,31 @@ void renderGraph() {
         if (dataList -> length > 0) {
             // printf("type: %d\n", self.packetDefinitions -> data[self.graph[i].index].r -> data[self.graph[i].field * 2 + 4].i);
             double value = convertToDouble(dataList -> data[0].r -> data[self.graph[i].field], self.packetDefinitions -> data[self.graph[i].index].r -> data[self.graph[i].field * 2 + 4].i);
-            oldX = self.graph[i].screenX;
+            if (self.renderByTimestamp) {
+                oldX = dataList -> data[0].r -> data[1].i * self.graph[i].scaleX + self.graph[i].screenX;
+            } else {
+                oldX = self.graph[i].screenX;
+            }
             oldY = value * self.graph[i].scaleY + self.graph[i].screenY;
         }
+        double minimumX = 100000000000000000.0; // DOUBLE_MAX
+        int32_t packetIndex = 0;
         while (index < dataList -> length) {
-            if (index * self.graph[i].scaleX + self.graph[i].screenX > 340) {
+            double x = 0;
+            if (self.renderByTimestamp) {
+                x = dataList -> data[index].r -> data[1].i * self.graph[i].scaleX + self.graph[i].screenX;
+                if (fabs(self.mx - x) < minimumX) {
+                    packetIndex = index;
+                    minimumX = fabs(self.mx - x);
+                }
+            } else {
+                x = index * self.graph[i].scaleX + self.graph[i].screenX;
+            }
+            if (x > 340) {
                 break;
             }
-            if (index * self.graph[i].scaleX + self.graph[i].screenX > -340) {
+            if (x > -340) {
                 double value = convertToDouble(dataList -> data[index].r -> data[self.graph[i].field], self.packetDefinitions -> data[self.graph[i].index].r -> data[self.graph[i].field * 2 + 4].i);
-                double x = index * self.graph[i].scaleX + self.graph[i].screenX;
                 double y = value * self.graph[i].scaleY + self.graph[i].screenY;
                 if (dataList -> data[index].r -> data[0].u & 0x1 || dataList -> data[index - stride].r -> data[0].u & 0x1 || (self.selecting && self.graph[i].editable && ((x > self.selectCoords[0] && x < self.selectCoords[2] && y > self.selectCoords[1] && y < self.selectCoords[3]) ||
                     (oldX > self.selectCoords[0] && oldX < self.selectCoords[2] && oldY > self.selectCoords[1] && oldY < self.selectCoords[3])))) {
@@ -926,7 +1011,9 @@ void renderGraph() {
         turtlePenUp();
 
         /* render mouse */
-        int32_t packetIndex = round((self.mx - self.graph[i].screenX) / self.graph[i].scaleX);
+        if (!self.renderByTimestamp) {
+            packetIndex = round((self.mx - self.graph[i].screenX) / self.graph[i].scaleX);
+        }
         if (packetIndex < 0) {
             packetIndex = 0;
         }
@@ -934,15 +1021,21 @@ void renderGraph() {
             packetIndex = dataList -> length - 1;
         }
         double value = convertToDouble(dataList -> data[packetIndex].r -> data[self.graph[i].field], self.packetDefinitions -> data[self.graph[i].index].r -> data[self.graph[i].field * 2 + 4].i);
+        double x = 0;
+        if (self.renderByTimestamp) {
+            x = dataList -> data[packetIndex].r -> data[1].i * self.graph[i].scaleX + self.graph[i].screenX;
+        } else {
+            x = packetIndex * self.graph[i].scaleX + self.graph[i].screenX;
+        }
         turtlePenSize(3);
         turtlePenColorAlpha(0, 0, 0, 200);
-        turtleGoto(packetIndex * self.graph[i].scaleX + self.graph[i].screenX, 180);
+        turtleGoto(x, 180);
         turtlePenDown();
-        turtleGoto(packetIndex * self.graph[i].scaleX + self.graph[i].screenX, -180);
+        turtleGoto(x, -180);
         turtlePenUp();
         turtlePenShape("circle");
 
-        turtleGoto(packetIndex * self.graph[i].scaleX + self.graph[i].screenX, value * self.graph[i].scaleY + self.graph[i].screenY);
+        turtleGoto(x, value * self.graph[i].scaleY + self.graph[i].screenY);
         turtlePenSize(3);
         tt_setColor(TT_COLOR_TEXT);
         turtlePenDown();
@@ -1171,12 +1264,17 @@ void mouseTick() {
                 selected_t newItem;
                 newItem.packetType = self.graph[i].index;
                 for (uint32_t index = 0; index < dataList -> length; index++) {
-                    if (index * self.graph[i].scaleX + self.graph[i].screenX > 340) {
+                    double x = 0;
+                    if (self.renderByTimestamp) {
+                        x = dataList -> data[index].r -> data[1].i * self.graph[i].scaleX + self.graph[i].screenX;
+                    } else {
+                        x = index * self.graph[i].scaleX + self.graph[i].screenX;
+                    }
+                    if (x > 340) {
                         break;
                     }
-                    if (index * self.graph[i].scaleX + self.graph[i].screenX > -340) {
+                    if (x > -340) {
                         double value = convertToDouble(dataList -> data[index].r -> data[self.graph[i].field], self.packetDefinitions -> data[self.graph[i].index].r -> data[self.graph[i].field * 2 + 4].i);
-                        double x = index * self.graph[i].scaleX + self.graph[i].screenX;
                         double y = value * self.graph[i].scaleY + self.graph[i].screenY;
                         if (x > self.selectCoords[0] && x < self.selectCoords[2] && y > self.selectCoords[1] && y < self.selectCoords[3]) {
                             /* add to selected */
@@ -1196,19 +1294,6 @@ void mouseTick() {
         if (self.keys[1] == 0) {
             /* first tick */
             self.keys[1] = 1;
-            for (int32_t i = 0; i < self.packets -> length; i++) {
-                char filename[128];
-                sprintf(filename, "pitotData_packet_%d.csv", i);
-                FILE *fp = fopen(filename, "w");
-                for (int32_t j = 0; j < self.packets -> data[i].r -> length; j++) {
-                    if (self.packets -> data[i].r -> data[j].r -> data[1].i <= 3800000)
-                    temp_f_list_print(fp, self.packets -> data[i].r -> data[j].r);
-                    // for (int32_t k = 0; k < self.packets -> data[i].r -> data[j].r -> length; k++) {
-                    //     fprintf(fp, "");
-                    // }
-                }
-                fclose(fp);
-            }
         } else {
             /* right click held */
         }
@@ -1258,7 +1343,7 @@ void parseRibbonOutput() {
                 printf("New\n");
             }
             if (ribbonRender.output[2] == 2) { // Save
-                if (strcmp(self.alreadyExported, "null") == 0) {
+                if (strcmp(self.alreadyExported, "null") != 0) {
                     export(self.alreadyExported);
                 } else {
                     if (osToolsFileDialogPrompt(1, "") != -1) {

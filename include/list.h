@@ -143,6 +143,7 @@ void *list_item(list_t *list, uint32_t index) {
 void list_free_lite(list_t *);
 void list_free(list_t *);
 void list_print_emb(list_t *);
+void list_fprint_emb(FILE *, list_t *);
 
 /* append to list, must specify type */
 void list_append(list_t *list, unitype data, char type) {
@@ -232,7 +233,7 @@ unitype list_delete(list_t *list, int32_t index) {
     return ret;
 }
 
-/* deletes the item at list[index] of the list and returns it, does not free pointers lists */
+/* deletes the item at list[index] of the list and returns it, does not free pointers or lists */
 unitype list_delete_no_free(list_t *list, int32_t index) {
     while (index < 0) {index += list -> length;}
     index %= list -> length;
@@ -446,6 +447,47 @@ void unitype_print(unitype item, char type) {
     }
 }
 
+void unitype_fprint(FILE *fp, unitype item, char type) {
+    switch (type) {
+        case 'i':
+            fprintf(fp, "%d", item.i);
+        break;
+        case 'u':
+            fprintf(fp, "%u", item.u);
+        break;
+        case 'f':
+            fprintf(fp, "%f", item.f);
+        break;
+        case 'd':
+            fprintf(fp, "%lf", item.d);
+        break;
+        case 'c':
+            fprintf(fp, "%c", item.c);
+        break;
+        case 's':
+            fprintf(fp, "%s", item.s);
+        break;
+        case 'p':
+            fprintf(fp, "%p", item.p);
+        break;
+        case 'r':
+            list_fprint_emb(fp, item.r);
+        break;
+        case 'l':
+            fprintf(fp, "%llu", item.l);
+        break;
+        case 'h':
+            fprintf(fp, "%hi", item.h);
+        break;
+        case 'b':
+            fprintf(fp, "%hi", item.b);
+        break;
+        default:
+            printf("unitype_fprint - type not recognized\n");
+            return;
+    }
+}
+
 /* copies one list to another (duplicates strings or pointers) */
 void list_copy(list_t *dest, list_t *src) {
     list_free_lite(dest);
@@ -490,62 +532,6 @@ void list_print(list_t *list) {
     }
 }
 
-void temp_unitype_f_print(FILE *fp, unitype item, char type) {
-    switch (type) {
-        case 'i':
-            fprintf(fp, "%d", item.i);
-        break;
-        case 'u':
-            fprintf(fp, "%u", item.u);
-        break;
-        case 'f':
-            fprintf(fp, "%f", item.f);
-        break;
-        case 'd':
-            fprintf(fp, "%lf", item.d);
-        break;
-        case 'c':
-            fprintf(fp, "%c", item.c);
-        break;
-        case 's':
-            fprintf(fp, "%s", item.s);
-        break;
-        case 'p':
-            fprintf(fp, "%p", item.p);
-        break;
-        case 'r':
-            list_print_emb(item.r);
-        break;
-        case 'l':
-            fprintf(fp, "%llu", item.l);
-        break;
-        case 'h':
-            fprintf(fp, "%hi", item.h);
-        break;
-        case 'b':
-            fprintf(fp, "%hi", item.b);
-        break;
-        default:
-            printf("temp_unitype_f_print - type not recognized\n");
-            return;
-    }
-}
-
-void temp_f_list_print(FILE *fp, list_t *list) {
-    if (list -> length == 0) {
-        fprintf(fp, "\n");
-        return;
-    }
-    for (uint32_t i = 0; i < list -> length; i++) {
-        temp_unitype_f_print(fp, list -> data[i], list -> type[i]);
-        if (i == list -> length - 1) {
-            fprintf(fp, "\n");
-        } else {
-            fprintf(fp, ", ");
-        }
-    }
-}
-
 /* prints the list but without closing \n */
 void list_print_emb(list_t *list) {
     printf("[");
@@ -576,6 +562,36 @@ void list_print_type(list_t *list) {
             printf("]\n");
         } else {
             printf(", ");
+        }
+    }
+}
+
+/* prints the list to a file (without brackets) */
+void list_fprint(FILE *fp, list_t *list) {
+    if (list -> length == 0) {
+        fprintf(fp, "\n");
+        return;
+    }
+    for (uint32_t i = 0; i < list -> length; i++) {
+        unitype_fprint(fp, list -> data[i], list -> type[i]);
+        if (i == list -> length - 1) {
+            fprintf(fp, "\n");
+        } else {
+            fprintf(fp, ", ");
+        }
+    }
+}
+
+/* prints the list a file but without closing \n */
+void list_fprint_emb(FILE *fp, list_t *list) {
+    if (list -> length == 0) {
+        fprintf(fp, "\n");
+        return;
+    }
+    for (uint32_t i = 0; i < list -> length; i++) {
+        unitype_fprint(fp, list -> data[i], list -> type[i]);
+        if (i != list -> length - 1) {
+            fprintf(fp, ", ");
         }
     }
 }
