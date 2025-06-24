@@ -442,7 +442,7 @@ void unitype_print(unitype item, char type) {
             printf("%hi", item.b);
         break;
         default:
-            printf("print - type not recognized\n");
+            printf("unitype_print - type %c not recognized\n", type);
             return;
     }
 }
@@ -483,7 +483,7 @@ void unitype_fprint(FILE *fp, unitype item, char type) {
             fprintf(fp, "%hi", item.b);
         break;
         default:
-            printf("unitype_fprint - type not recognized\n");
+            printf("unitype_fprint - type %c not recognized\n", type);
             return;
     }
 }

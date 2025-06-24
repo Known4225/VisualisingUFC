@@ -234,6 +234,7 @@ void import(char *filename) {
 
 void export(char *filename) {
     strcpy(self.alreadyExported, filename);
+    /* gather packets in order of quantity */
     list_t *lengths = list_init();
     list_t *lengthsCreate = list_init();
     for (int32_t i = 0; i < self.packets -> length; i++) {
@@ -254,35 +255,38 @@ void export(char *filename) {
     FILE *fp = fopen(filename, "w");
     /* write headers */
     list_t *writeIndices = list_init();
+    for (int32_t i = 0; i < self.packetDefinitions -> length; i++) {
+        list_append(writeIndices, (unitype) list_init(), 'r');
+        for (int32_t j = 5; j < self.packetDefinitions -> data[i].r -> length; j += 2) {
+            if (self.packetDefinitions -> data[i].r -> type[j] == 's' && strcmp(self.packetDefinitions -> data[i].r -> data[j].s, "pkt_len") != 0) {
+                list_append(writeIndices -> data[i].r, (unitype) (j / 2 - 2), 'i');
+            }
+        }
+    }
+    list_print(writeIndices);
     for (int32_t i = 0; i < self.packets -> length; i++) {
         if (self.packets -> data[lengths -> data[i].i].r -> length > 0) {
-            if (i == self.packets -> length - 1 || 0 >= self.packets -> data[lengths -> data[i + 1].i].r -> length) {
-                for (int32_t j = 5; j < self.packetDefinitions -> data[lengths -> data[i].i].r -> length; j += 2) {
-                    if (self.packetDefinitions -> data[lengths -> data[i].i].r -> type[j] == 's') {
-                        if (j == self.packetDefinitions -> data[lengths -> data[i].i].r -> length - 3) {
-                            fprintf(fp, "%s\n", self.packetDefinitions -> data[lengths -> data[i].i].r -> data[j].s);
-                        } else {
-                            fprintf(fp, "%s, ", self.packetDefinitions -> data[lengths -> data[i].i].r -> data[j].s);
-                        }
-                    }
-                }
-            } else {
-                for (int32_t j = 5; j < self.packetDefinitions -> data[lengths -> data[i].i].r -> length; j += 2) {
-                    if (self.packetDefinitions -> data[lengths -> data[i].i].r -> type[j] == 's') {
-                        fprintf(fp, "%s, ", self.packetDefinitions -> data[lengths -> data[i].i].r -> data[j].s);
-                    }
+            for (int32_t j = 0; j < writeIndices -> data[lengths -> data[i].i].r -> length; j++) {
+                if ((i == self.packets -> length - 1 || 0 >= self.packets -> data[lengths -> data[i + 1].i].r -> length) && j == writeIndices -> data[lengths -> data[i].i].r -> length - 1) {
+                    fprintf(fp, "%s\n", self.packetDefinitions -> data[lengths -> data[i].i].r -> data[writeIndices -> data[lengths -> data[i].i].r -> data[j].i * 2 + 5].s);
+                } else {
+                    fprintf(fp, "%s, ", self.packetDefinitions -> data[lengths -> data[i].i].r -> data[writeIndices -> data[lengths -> data[i].i].r -> data[j].i * 2 + 5].s);
                 }
             }
         }
     }
+    printf("barely made it\n");
     for (int32_t iter = 0; iter < self.packets -> data[lengths -> data[0].i].r -> length; iter++) {
         for (int32_t i = 0; i < self.packets -> length; i++) {
             if (self.packets -> data[lengths -> data[i].i].r -> length > iter) {
-                if (i == self.packets -> length - 1 || iter >= self.packets -> data[lengths -> data[i + 1].i].r -> length) {
-                    list_fprint(fp, self.packets -> data[lengths -> data[i].i].r -> data[iter].r);
-                } else {
-                    list_fprint_emb(fp, self.packets -> data[lengths -> data[i].i].r -> data[iter].r);
-                    fprintf(fp, ", ");
+                for (int32_t j = 0; j < writeIndices -> data[lengths -> data[i].i].r -> length; j++) {
+                    // list_print(self.packets -> data[lengths -> data[i].i].r -> data[iter].r);
+                    unitype_fprint(fp, self.packets -> data[lengths -> data[i].i].r -> data[iter].r -> data[writeIndices -> data[lengths -> data[i].i].r -> data[j].i], self.packets -> data[lengths -> data[i].i].r -> data[iter].r -> type[writeIndices -> data[lengths -> data[i].i].r -> data[j].i]);
+                    if ((i == self.packets -> length - 1 || iter >= self.packets -> data[lengths -> data[i + 1].i].r -> length) && j == writeIndices -> data[lengths -> data[i].i].r -> length - 1) {
+                        fprintf(fp, "\n");
+                    } else {
+                        fprintf(fp, ", ");
+                    }
                 }
             }
         }
