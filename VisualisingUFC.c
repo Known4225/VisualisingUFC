@@ -234,13 +234,62 @@ void import(char *filename) {
 
 void export(char *filename) {
     strcpy(self.alreadyExported, filename);
-    FILE *fp = fopen(filename, "w");
+    list_t *lengths = list_init();
+    list_t *lengthsCreate = list_init();
     for (int32_t i = 0; i < self.packets -> length; i++) {
-        for (int32_t j = 0; j < self.packets -> data[i].r -> length; j++) {
-            list_fprint(fp, self.packets -> data[i].r -> data[j].r);
+        list_append(lengthsCreate, (unitype) (self.packets -> data[i].r -> length), 'i');
+    }
+    list_print(lengthsCreate);
+    list_sort(lengthsCreate);
+    for (int32_t i = 0; i < self.packets -> length; i++) {
+        for (int32_t j = 0; j < self.packets -> length; j++) {
+            if (self.packets -> data[j].r -> length == lengthsCreate -> data[i].i && list_count(lengths, (unitype) j, 'i') == 0) {
+                list_append(lengths, (unitype) j, 'i');
+                break;
+            }
+        }
+    }
+    list_free(lengthsCreate);
+    list_print(lengths);
+    FILE *fp = fopen(filename, "w");
+    /* write headers */
+    list_t *writeIndices = list_init();
+    for (int32_t i = 0; i < self.packets -> length; i++) {
+        if (self.packets -> data[lengths -> data[i].i].r -> length > 0) {
+            if (i == self.packets -> length - 1 || 0 >= self.packets -> data[lengths -> data[i + 1].i].r -> length) {
+                for (int32_t j = 5; j < self.packetDefinitions -> data[lengths -> data[i].i].r -> length; j += 2) {
+                    if (self.packetDefinitions -> data[lengths -> data[i].i].r -> type[j] == 's') {
+                        if (j == self.packetDefinitions -> data[lengths -> data[i].i].r -> length - 3) {
+                            fprintf(fp, "%s\n", self.packetDefinitions -> data[lengths -> data[i].i].r -> data[j].s);
+                        } else {
+                            fprintf(fp, "%s, ", self.packetDefinitions -> data[lengths -> data[i].i].r -> data[j].s);
+                        }
+                    }
+                }
+            } else {
+                for (int32_t j = 5; j < self.packetDefinitions -> data[lengths -> data[i].i].r -> length; j += 2) {
+                    if (self.packetDefinitions -> data[lengths -> data[i].i].r -> type[j] == 's') {
+                        fprintf(fp, "%s, ", self.packetDefinitions -> data[lengths -> data[i].i].r -> data[j].s);
+                    }
+                }
+            }
+        }
+    }
+    for (int32_t iter = 0; iter < self.packets -> data[lengths -> data[0].i].r -> length; iter++) {
+        for (int32_t i = 0; i < self.packets -> length; i++) {
+            if (self.packets -> data[lengths -> data[i].i].r -> length > iter) {
+                if (i == self.packets -> length - 1 || iter >= self.packets -> data[lengths -> data[i + 1].i].r -> length) {
+                    list_fprint(fp, self.packets -> data[lengths -> data[i].i].r -> data[iter].r);
+                } else {
+                    list_fprint_emb(fp, self.packets -> data[lengths -> data[i].i].r -> data[iter].r);
+                    fprintf(fp, ", ");
+                }
+            }
         }
     }
     fclose(fp);
+    list_free(lengths);
+    list_free(writeIndices);
 }
 
 void init() {
