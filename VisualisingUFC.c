@@ -218,18 +218,133 @@ int32_t matchPacket(int32_t packetIndex, uint8_t *file, uint32_t maxLength) {
 }
 
 void import(char *filename) {
-    /* memory map file */
-    uint32_t fileSize = 0;
-    uint8_t *fileData = mapFile(filename, &fileSize);
-    if (fileData == NULL) {
-        return;
-    }
-    for (uint32_t i = 0; i < fileSize; i++) {
-        for (uint32_t j = 0; j < self.packetDefinitions -> length; j++) {
-            matchPacket(j, fileData + i, fileSize - i);
+    if (filename[strlen(filename) - 3] == 't' && filename[strlen(filename) - 2] == 'x' && filename[strlen(filename) - 1] == 't') {
+        /* txt file - memory map file */
+        uint32_t fileSize = 0;
+        uint8_t *fileData = mapFile(filename, &fileSize);
+        if (fileData == NULL) {
+            return;
         }
+        for (uint32_t i = 0; i < fileSize; i++) {
+            for (uint32_t j = 0; j < self.packetDefinitions -> length; j++) {
+                matchPacket(j, fileData + i, fileSize - i);
+            }
+        }
+        unmapFile(fileData);
+    } else if (filename[strlen(filename) - 3] == 'c' && filename[strlen(filename) - 2] == 's' && filename[strlen(filename) - 1] == 'v') {
+        /* csv file - memory map file */
+        uint32_t fileSize = 0;
+        uint8_t *fileData = mapFile(filename, &fileSize);
+        if (fileData == NULL) {
+            return;
+        }
+        /* gather headers */
+        uint32_t headersCheck = 0;
+        uint32_t headersIndex = 0;
+        list_t *headers = list_init();
+        while (headersCheck < fileSize / 2) { // assume headers take up no more than half of the filesize
+            if (fileData[headersCheck] == ',') {
+                fileData[headersCheck] = '\0';
+                list_append(headers, (unitype) (char *) (fileData + headersIndex), 's');
+                fileData[headersCheck] = ',';
+                headersIndex = headersCheck + 1;
+                while (fileData[headersIndex] == ' ') {
+                    headersCheck++;
+                    headersIndex++;
+                }
+            }
+            if (fileData[headersCheck] == '\n' || fileData[headersCheck] == '\r') {
+                char tempHold = fileData[headersCheck];
+                fileData[headersCheck] = '\0';
+                list_append(headers, (unitype) (char *) (fileData + headersIndex), 's');
+                fileData[headersCheck] = tempHold;
+                break;
+            }
+            headersCheck++;
+        }
+        while (fileData[headersCheck] == '\r' || fileData[headersCheck] == '\n') {
+            headersCheck++;
+        }
+        uint32_t dataIndex = headersCheck;
+        uint32_t dataCheck = headersCheck;
+        /* create packet */
+        list_t *newPacket = list_init();
+        list_append(newPacket, (unitype) "newPacket", 's');
+        list_append(newPacket, (unitype) (uint32_t) (1 * sizeof(int64_t) + (headers -> length - 1) * sizeof(double)), 'i');
+        list_append(newPacket, (unitype) 0, 'i'); // reserved for index of dataFile source
+        list_append(newPacket, (unitype) 0, 'i'); // reserved for selected
+        list_append(newPacket, (unitype) UFC_PACKET_FIELD_DELIMETER_UINT32, 'i'); // dummy start delimeter
+        list_append(newPacket, (unitype) -1, 'u');
+        for (uint32_t i = 0; i < headers -> length; i++) {
+            if (i == 0) {
+                list_append(newPacket, (unitype) UFC_PACKET_FIELD_INT64, 'i');
+                list_append(newPacket, headers -> data[i], 's');
+            } else {
+                list_append(newPacket, (unitype) UFC_PACKET_FIELD_DOUBLE, 'i');
+                list_append(newPacket, headers -> data[i], 's');
+            }
+        }
+        list_append(newPacket, (unitype) UFC_PACKET_FIELD_DELIMETER_UINT32, 'i'); // dummy end delimeter
+        list_append(newPacket, (unitype) -1, 'u');
+        list_append(self.packetDefinitions, (unitype) newPacket, 'r');
+        list_append(self.packets, (unitype) list_init(), 'r');
+        self.directory = malloc(self.packetDefinitions -> length * sizeof(int8_t *)); // me when memory leak
+        for (uint32_t i = 0; i < self.packetDefinitions -> length; i++) {
+            self.directory[i] = calloc(self.packetDefinitions -> data[i].r -> length / 2 - 2, 1);
+        }
+        self.bottomBoxHeight = self.packetDefinitions -> length * 12 + 10;
+        list_print(newPacket);
+        /* gather data */
+        int32_t packetIndex = self.packets -> length - 1;
+        int32_t column = 0;
+        while (dataCheck < fileSize) {
+            // printf("%d %d\n", dataIndex, dataCheck);
+            if (fileData[dataCheck] == ',') {
+                fileData[dataCheck] = '\0';
+                if (column == 0) {
+                    list_append(self.packets -> data[packetIndex].r, (unitype) list_init(), 'r');
+                    list_append(self.packets -> data[packetIndex].r -> data[self.packets -> data[packetIndex].r -> length - 1].r, (unitype) 0, 'l'); // dummy delimeter
+                    double timestamp = 0;
+                    sscanf((char *) (fileData + dataIndex), "%lf", &timestamp);
+                    list_append(self.packets -> data[packetIndex].r -> data[self.packets -> data[packetIndex].r -> length - 1].r, (unitype) (uint64_t) (int64_t) (timestamp * 1000), 'l');
+                } else {
+                    double field;
+                    sscanf((char *) (fileData + dataIndex), "%lf", &field);
+                    list_append(self.packets -> data[packetIndex].r -> data[self.packets -> data[packetIndex].r -> length - 1].r, (unitype) field, 'd');
+                }
+                fileData[dataCheck] = ',';
+                dataIndex = dataCheck + 1;
+                while (fileData[dataIndex] == ' ') {
+                    dataCheck++;
+                    dataIndex++;
+                }
+                column++;
+            }
+            if (fileData[dataCheck] == '\n' || fileData[dataCheck] == '\r') {
+                char tempHold = fileData[dataCheck];
+                fileData[dataCheck] = '\0';
+                if (column == 0) {
+                    list_append(self.packets -> data[packetIndex].r, (unitype) list_init(), 'r');
+                    list_append(self.packets -> data[packetIndex].r -> data[self.packets -> data[packetIndex].r -> length - 1].r, (unitype) 0, 'l'); // dummy delimeter
+                    double timestamp = 0;
+                    sscanf((char *) (fileData + dataIndex), "%lf", &timestamp);
+                    list_append(self.packets -> data[packetIndex].r -> data[self.packets -> data[packetIndex].r -> length - 1].r, (unitype) (uint64_t) (int64_t) (timestamp * 1000), 'l');
+                } else {
+                    double field;
+                    sscanf((char *) (fileData + dataIndex), "%lf", &field);
+                    list_append(self.packets -> data[packetIndex].r -> data[self.packets -> data[packetIndex].r -> length - 1].r, (unitype) field, 'd');
+                }
+                fileData[dataCheck] = tempHold;
+                while (fileData[dataCheck] == '\r' || fileData[dataCheck] == '\n') {
+                    dataCheck++;
+                }
+                dataIndex = dataCheck;
+                column = 0;
+            }
+            dataCheck++;
+        }
+        unmapFile(fileData);
     }
-    unmapFile(fileData);
 }
 
 void export(char *filename) {
@@ -240,7 +355,6 @@ void export(char *filename) {
     for (int32_t i = 0; i < self.packets -> length; i++) {
         list_append(lengthsCreate, (unitype) (self.packets -> data[i].r -> length), 'i');
     }
-    list_print(lengthsCreate);
     list_sort(lengthsCreate);
     for (int32_t i = 0; i < self.packets -> length; i++) {
         for (int32_t j = 0; j < self.packets -> length; j++) {
@@ -251,7 +365,6 @@ void export(char *filename) {
         }
     }
     list_free(lengthsCreate);
-    list_print(lengths);
     FILE *fp = fopen(filename, "w");
     /* write headers */
     list_t *writeIndices = list_init();
@@ -263,7 +376,6 @@ void export(char *filename) {
             }
         }
     }
-    list_print(writeIndices);
     for (int32_t i = 0; i < self.packets -> length; i++) {
         if (self.packets -> data[lengths -> data[i].i].r -> length > 0) {
             for (int32_t j = 0; j < writeIndices -> data[lengths -> data[i].i].r -> length; j++) {
@@ -275,7 +387,6 @@ void export(char *filename) {
             }
         }
     }
-    printf("barely made it\n");
     for (int32_t iter = 0; iter < self.packets -> data[lengths -> data[0].i].r -> length; iter++) {
         for (int32_t i = 0; i < self.packets -> length; i++) {
             if (self.packets -> data[lengths -> data[i].i].r -> length > iter) {
@@ -285,7 +396,7 @@ void export(char *filename) {
                     if ((i == self.packets -> length - 1 || iter >= self.packets -> data[lengths -> data[i + 1].i].r -> length) && j == writeIndices -> data[lengths -> data[i].i].r -> length - 1) {
                         fprintf(fp, "\n");
                     } else {
-                        fprintf(fp, ", ");
+                        fprintf(fp, ",");
                     }
                 }
             }
@@ -766,10 +877,10 @@ void renderInfo() {
         double arrowX = -310;
         double arrowY = -180 + self.bottomBoxHeight - 8;
         if (self.my > arrowY - 5 && self.my < arrowY + 5 && self.mx > arrowX - 5 && self.mx < arrowX + 5) {
-            tt_setColor(TT_COLOR_RIBBON_TOP);
+            tt_setColor(TT_COLOR_TEXT_ALTERNATE);
             self.hoverField = -2;
         } else {
-            tt_setColor(TT_COLOR_TEXT_ALTERNATE);
+            tt_setColor(TT_COLOR_RIBBON_TOP);
         }
         turtleTriangle(arrowX - 3, arrowY, arrowX + 3, arrowY + 4, arrowX + 3, arrowY - 4);
     }
@@ -884,14 +995,10 @@ void renderGraph() {
         }
     }
     if (self.zeroTimestamp) {
-        /* zero timestamp at beginning of sources - TODO: zero point at the start of any source, not all sources (RETAIN SYNCED TIMESTAMPS) */
-        int32_t zeroIndex = -1;
+        /* zero timestamp at beginning of sources */
         for (uint32_t i = 0; i < NUMBER_OF_GRAPH_SOURCES; i++) {
             if (self.graph[i].index >= 0 && self.graph[i].editable) {
-                if (zeroIndex == -1) {
-                    zeroIndex = i;
-                }
-                uint32_t timestampOffset = self.packets -> data[self.graph[zeroIndex].index].r -> data[0].r -> data[1].u;
+                uint32_t timestampOffset = self.packets -> data[self.graph[i].index].r -> data[0].r -> data[1].u;
                 for (uint32_t j = 0; j < self.packets -> data[self.graph[i].index].r -> length; j++) {
                     self.packets -> data[self.graph[i].index].r -> data[j].r -> data[1].u -= timestampOffset;
                 }
@@ -1180,6 +1287,8 @@ void renderGraph() {
 }
 
 void mouseTick() {
+    // printf("%d %d\n", self.hoverIndex, self.hoverField);
+    // list_print(self.packets);
     if (turtleMouseDown()) {
         if (self.keys[0] == 0) {
             /* first tick */
